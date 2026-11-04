@@ -30,12 +30,17 @@ test('walking is frame-rate independent and constrained to the arena', () => {
 
 test('jump uses gravity, lands, and cannot be retriggered in midair', () => {
   const game = training();
-  game.jump(0); tick(game, .15);
+  game.jump(0); tick(game, .05);
+  assert.equal(game.fighters[0].jumpPhase, 'prepare');
+  assert.equal(game.fighters[0].y, 0, 'anticipation keeps both feet grounded');
+  assert.equal(game.jump(0), false);
+  tick(game, .14);
   assert.ok(game.fighters[0].y > 70);
   assert.equal(game.jump(0), false);
   tick(game, 1);
   assert.equal(game.fighters[0].y, 0);
   assert.equal(game.fighters[0].vy, 0);
+  assert.equal(game.fighters[0].jumpPhase, 'ground');
 });
 
 test('punch only connects inside its active window, once per attack', () => {

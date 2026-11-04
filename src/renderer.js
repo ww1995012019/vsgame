@@ -1,6 +1,6 @@
 import { WORLD, CHARACTERS, attackFor } from './engine.js';
 import { originalPoseFor, drawSkinBones } from './rig.js';
-import { OriginalSkin, SKIN_SURFACE } from './skin.js';
+import { OriginalSkin, SKIN_SURFACE, CharacterLayer } from './skin.js';
 
 export class Renderer {
   constructor(canvas, game) {
@@ -26,6 +26,7 @@ export class Renderer {
     this.dpr = Math.min(devicePixelRatio || 1, 2);
     this.canvas.width = Math.round(bounds.width * this.dpr);
     this.canvas.height = Math.round(bounds.height * this.dpr);
+    this.characterLayer?.resize(this.canvas.width, this.canvas.height);
   }
 
   async load() {
@@ -35,7 +36,9 @@ export class Renderer {
       img.onerror = () => reject(new Error(`无法加载 ${id} 美术资源`));
       img.src = new URL(`../public/assets/${id}.png`, import.meta.url).href;
     })));
-    for (const id of ['lieying', 'hanfeng']) this.skins[id] = new OriginalSkin(this.images[id], id);
+    const layer = new CharacterLayer(this.canvas);
+    this.characterLayer = layer.gl ? layer : null;
+    for (const id of ['lieying', 'hanfeng']) this.skins[id] = new OriginalSkin(this.images[id], id, { layer: this.characterLayer });
   }
 
   render(dt) {
@@ -43,12 +46,14 @@ export class Renderer {
     if (!this.width || !this.height) return;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, this.width, this.height);
+    this.characterLayer?.clear();
     const [a, b] = game.fighters;
     const visibleWidth = this.width < 850 ? Math.max(880, Math.abs(a.x - b.x) + 590) : WORLD.width;
-    const scale = Math.min(this.width / visibleWidth, this.height / WORLD.height);
+    const floorRatio = this.width < 700 && this.height > this.width ? .74 : .91;
+    // Reserve vertical room for the complete jump without shrinking the fighters in flight.
+    const scale = Math.min(this.width / visibleWidth, this.height / WORLD.height, (this.height * floorRatio - 18) / 750);
     const cameraX = this.width < 850 ? (a.x + b.x) / 2 : WORLD.width / 2;
     const shake = this.shakeEnabled && !this.reducedMotion ? game.shake : 0;
-    const floorRatio = this.width < 700 && this.height > this.width ? .74 : .91;
     ctx.translate(this.width / 2 - cameraX * scale + (Math.random() - .5) * shake * scale, this.height * floorRatio - WORLD.floor * scale + (Math.random() - .5) * shake * scale);
     ctx.scale(scale, scale);
     this.drawAmbient(ctx, dt);
@@ -82,8 +87,9 @@ export class Renderer {
   drawFighter(ctx, f, index) {
     const skin = this.skins[f.id];
     if (!skin) return;
-    const rig = skin.render(originalPoseFor(f, this.game.elapsed, index, this.game.result, this.reducedMotion));
-    const draw = () => ctx.drawImage(skin.canvas, -SKIN_SURFACE.x, -SKIN_SURFACE.y);
+    const rig = originalPoseFor(f, this.game.elapsed, index, this.game.result, this.reducedMotion);
+    if (!this.characterLayer) skin.render(rig);
+    const draw = () => this.characterLayer ? this.characterLayer.draw(skin, rig, ctx.getTransform(), ctx.globalAlpha) : ctx.drawImage(skin.canvas, -SKIN_SURFACE.x, -SKIN_SURFACE.y);
     const shadow = ctx.createRadialGradient(f.x, WORLD.floor + 2, 0, f.x, WORLD.floor + 2, 140);
     shadow.addColorStop(0, '#02090bc4'); shadow.addColorStop(1, '#02090b00');
     ctx.fillStyle = shadow; ctx.beginPath(); ctx.ellipse(f.x, WORLD.floor + 4, 140 - Math.min(f.y * .2, 80), 18, 0, 0, Math.PI * 2); ctx.fill();
@@ -99,6 +105,9 @@ export class Renderer {
       ctx.translate(0, -18 * progress); ctx.rotate(-progress * 1.28);
     }
     if (f.hitFlash > .07) ctx.globalAlpha = .65;
+    if (this.characterLayer && f.id === 'lieying' && f.attack?.type === 'skill' && f.attack.time > .1 && f.attack.time < .54 && !this.reducedMotion) {
+      for (let i = 3; i >= 1; i--) { ctx.save(); ctx.translate(-i * 52, i * 2); this.characterLayer.draw(skin, rig, ctx.getTransform(), .12); ctx.restore(); }
+    }
     draw();
     if (this.showBones) drawSkinBones(ctx, rig);
     ctx.restore();
@@ -127,7 +136,7 @@ export class Renderer {
     if (move.effect === 'dash' && a.time > .1 && age < .30) {
       if (behind) {
         ctx.globalAlpha = .14;
-        for (let i = 3; i >= 1; i--) { ctx.save(); ctx.translate(-i * 52, i * 2); ctx.drawImage(this.skins[f.id].canvas, -SKIN_SURFACE.x, -SKIN_SURFACE.y); ctx.restore(); }
+        if (!this.characterLayer) for (let i = 3; i >= 1; i--) { ctx.save(); ctx.translate(-i * 52, i * 2); ctx.drawImage(this.skins[f.id].canvas, -SKIN_SURFACE.x, -SKIN_SURFACE.y); ctx.restore(); }
         ctx.globalAlpha = .7; ctx.strokeStyle = '#ffb225';
         for (let i = 0; i < 8; i++) {
           const y = -65 - i * 49, offset = (a.time * 540 + i * 32) % 95;

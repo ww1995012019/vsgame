@@ -1,3 +1,5 @@
+import { WALK, JUMP } from './motion.js';
+
 // Original artwork is the skin. These joints refer to the repository's unchanged
 // atlas cells normalized to 448 units; the original PNGs are 1774 x 887.
 // No replacement character drawing is generated here.
@@ -65,41 +67,117 @@ function poseFrames(f,index,result) {
     const weight=a.time<active?smoothSkin(a.time/active):a.time>end?1-smoothSkin((a.time-end)/(duration-end)):1;
     return [{frame:0,weight:1-weight},{frame,weight}].filter(x=>x.weight>.0001);
   }
-  const weight=smoothSkin((f.y||0)/90);
-  return weight>0?[{frame:0,weight:1-weight},{frame:7,weight}].filter(x=>x.weight>.0001):[{frame:0,weight:1}];
+  return [{frame:0,weight:1}];
 }
 export function originalPoseFor(f,elapsed=0,index=0,result=null,reducedMotion=false) {
   const frames=poseFrames(f,index,result);
   let joints=worldJoints(f.id,frames[0].frame);
   if(frames.length>1)joints=mixJoints(joints,worldJoints(f.id,frames[1].frame),frames[1].weight);
-  joints=copyJoints(joints);
-  if(!reducedMotion && !f.attack && !f.stun && !f.blocking && !result && !(f.y>1)) {
-    const base=copyJoints(joints),breath=Math.sin(elapsed*3.6+index*1.7),walk=f.walkBlend??(f.walking?1:0);
-    const bob=(breath+1)*.7+walk*(24+Math.cos((f.stride||0)*2)*2);
-    for(const p of Object.values(joints))p.y+=bob;
-    // Upper body and arms inherit the torso, then receive small independent
-    // rotations. The face, hair, gloves and boots keep their painted details.
-    const lean=breath*.006+walk*(f.move||0)*(f.facing||1)*.022;
-    for(const name of ['neck','head','shoulderN','elbowN','wristN','handN','shoulderF','elbowF','wristF','handF'])joints[name]=skinRotate(joints[name],joints.hip,lean);
-    joints.head=skinRotate(joints.head,joints.neck,-lean*.6);
-    for(const side of ['N','F']){
-      const phase=(f.stride||0)+(side==='N'?0:Math.PI),sway=breath*.012+Math.sin(phase)*walk*.05;
-      for(const name of ['elbow','wrist','hand'])joints[name+side]=skinRotate(joints[name+side],joints['shoulder'+side],sway);
-      const ankleBase=base['ankle'+side];
-      const u=((phase/(Math.PI*2))%1+1)%1,direction=(f.move||1)*(f.facing||1);
-      const step=u<.6?{x:skinMix(28,-28,u/.6)*direction,y:0}:{x:skinMix(-28,28,smoothSkin((u-.6)/.4))*direction,y:-Math.sin((u-.6)/.4*Math.PI)*16};
-      const target={x:ankleBase.x+step.x*walk,y:ankleBase.y+step.y*walk};
-      const hip=joints['hip'+side],knee0=base['knee'+side],ankle0=base['ankle'+side],hip0=base['hip'+side];
-      const upper=Math.hypot(knee0.x-hip0.x,knee0.y-hip0.y),lower=Math.hypot(ankle0.x-knee0.x,ankle0.y-knee0.y);
-      const cross=(ankle0.y-hip0.y)*(knee0.x-hip0.x)-(ankle0.x-hip0.x)*(knee0.y-hip0.y);
-      const [knee,ankle]=twoBoneIK(hip,target,upper,lower,Math.sign(cross)||1);
-      joints['knee'+side]=knee;joints['ankle'+side]=ankle;
-      const toe=base['toe'+side];joints['toe'+side]={x:toe.x+ankle.x-ankle0.x,y:toe.y+ankle.y-ankle0.y};
+  const attachment=frames.reduce((a,b)=>a.weight>=b.weight?a:b).frame;
+  const layered=!f.attack && !f.stun && !f.blocking && !result;
+  let motion=null;
+  if(layered){motion=locomotionPose(f,elapsed,index,reducedMotion);joints=motion.joints;}
+  else {
+    // Different painted poses do not contain compatible hidden arm/torso pixels.
+    // Keep each attachment's proportions, with continuous root movement and
+    // bounded FK accents; never stretch a guard texture into an uppercut.
+    const root={...joints.hip},source=worldJoints(f.id,attachment);
+    joints=copyJoints(source);
+    for(const p of Object.values(joints)){p.x+=root.x-source.hip.x;p.y+=root.y-source.hip.y;}
+    if(f.attack && !reducedMotion){
+      const duration={punch:.31,kick:.53,special:.75,skill:.78}[f.attack.type];
+      const accent=Math.sin(Math.PI*Math.max(0,Math.min(1,f.attack.time/duration)))*.025;
+      const side=f.attack.type==='skill'&&f.id==='hanfeng'?'N':'F';
+      for(const name of ['elbow','wrist','hand'])joints[name+side]=skinRotate(joints[name+side],joints['shoulder'+side],accent);
     }
   }
   const effectSide=f.attack?.type==='skill' && f.id==='hanfeng'?(joints.wristN.y<joints.wristF.y?'N':'F'):'F';
-  const attachment=frames.reduce((a,b)=>a.weight>=b.weight?a:b).frame;
-  return {frames,attachment,joints,effectHand:joints['hand'+effectSide]};
+  return {frames,attachment,joints,layered,motion,effectHand:joints['hand'+effectSide]};
+}
+// Sole heights measured from the unchanged source alpha silhouettes (world units).
+export const SOLE_LIFT={lieying:{N:2.21,F:2.21},hanfeng:{N:6.53,F:3.70}};
+export function walkFoot(phase){
+  const u=((phase/(Math.PI*2))%1+1)%1,span=WALK.stride*WALK.stance,amp=span/2;
+  if(u<WALK.stance)return {x:amp-u/WALK.stance*span,y:0,pitch:0,contact:true};
+  const t=(u-WALK.stance)/(1-WALK.stance),m=-span*(1-WALK.stance)/WALK.stance;
+  const x=(2*t*t*t-3*t*t+1)*(-amp)+(t*t*t-2*t*t+t)*m+(-2*t*t*t+3*t*t)*amp+(t*t*t-t*t)*m;
+  return {x,y:-WALK.lift*Math.sin(t*Math.PI)**2,pitch:Math.sin(t*Math.PI)*.12,contact:false};
+}
+export function locomotionPose(f,elapsed=0,index=0,reducedMotion=false){
+  const base=worldJoints(f.id,0),joints=copyJoints(base),sole=SOLE_LIFT[f.id];
+  const rootLift=Math.max(sole.N,sole.F),targets={},pitches={},contacts={};
+  const phase=f.jumpPhase||((f.y||0)>0?'air':'ground'),walking=phase==='ground'?smoothSkin(f.walkBlend??(f.walking?1:0)):0;
+  let stage=walking>.001?'walk':'idle',drop=reducedMotion?0:(Math.sin(elapsed*3.6+index*1.7)+1)*.6;
+  drop+=walking*(-19+Math.cos((f.stride||0)*2)*1.2);
+  let tuck=0;
+  if(phase==='prepare') {stage='prepare';drop=16*smoothSkin((f.jumpClock||0)/JUMP.prepare);}
+  else if(phase==='air'||f.y>0){
+    const t=Math.max(0,Math.min(1,((f.jumpVelocity||JUMP.velocity)-(f.vy||0))/(2*(f.jumpVelocity||JUMP.velocity))));
+    tuck=Math.sin(t*Math.PI)**2;stage=(f.vy||0)>110?'rise':(f.vy||0)<-110?'fall':'apex';
+    drop=16*(1-smoothSkin((f.jumpClock||0)/.10));
+  }else if(phase==='land'){stage='land';drop=16*Math.sin(Math.PI*Math.min(1,(f.jumpClock||0)/JUMP.land));}
+  for(const p of Object.values(joints))p.y+=rootLift+drop;
+  const breath=reducedMotion?0:Math.sin(elapsed*3.6+index*1.7);
+  const lean=breath*.004+walking*(f.move||0)*(f.facing||1)*.025+tuck*.035;
+  for(const name of ['neck','head','shoulderN','elbowN','wristN','handN','shoulderF','elbowF','wristF','handF'])joints[name]=skinRotate(joints[name],joints.hip,lean);
+  joints.head=skinRotate(joints.head,joints.neck,-lean*.7);
+  for(const side of ['N','F']){
+    const step=walkFoot((f.stride||0)+(side==='N'?0:Math.PI));
+    const a=base['ankle'+side],hip=base['hip'+side],center=hip.x+(side==='N'?66:-66);
+    const x=skinMix(a.x,center+step.x,walking),y=a.y+sole[side]+step.y*walking;
+    targets[side]={x:skinMix(x,side==='N'?hip.x+68:a.x,tuck),y:y-tuck*(side==='N'?72:12)};
+    pitches[side]=step.pitch*walking+tuck*(side==='N'?.13:.06);
+    contacts[side]=!tuck && phase!=='air' && (!walking||step.contact);
+    const sway=breath*.009+Math.sin((f.stride||0)+(side==='N'?0:Math.PI))*walking*.04;
+    for(const name of ['elbow','wrist','hand'])joints[name+side]=skinRotate(joints[name+side],joints['shoulder'+side],sway);
+  }
+  // A single pelvis correction supports both planted feet; neither leg is stretched.
+  let correction=0;
+  for(const side of ['N','F']){
+    const h=base['hip'+side],k=base['knee'+side],a=base['ankle'+side],target=targets[side];
+    const length=Math.hypot(k.x-h.x,k.y-h.y)+Math.hypot(a.x-k.x,a.y-k.y)-(walking?2:.001);
+    const dx=target.x-joints['hip'+side].x,maxY=Math.sqrt(Math.max(1,length*length-dx*dx));
+    correction=Math.max(correction,target.y-maxY-joints['hip'+side].y);
+  }
+  if(correction>0)for(const p of Object.values(joints))p.y+=correction;
+  for(const side of ['N','F']){
+    const h=base['hip'+side],k=base['knee'+side],a=base['ankle'+side],toe=base['toe'+side];
+    const upper=Math.hypot(k.x-h.x,k.y-h.y),lower=Math.hypot(a.x-k.x,a.y-k.y);
+    const bend=Math.sign((a.y-h.y)*(k.x-h.x)-(a.x-h.x)*(k.y-h.y))||1;
+    const [knee,ankle]=twoBoneIK(joints['hip'+side],targets[side],upper,lower,bend);
+    joints['knee'+side]=knee;joints['ankle'+side]=ankle;
+    const foot={x:ankle.x+toe.x-a.x,y:ankle.y+toe.y-a.y};
+    joints['toe'+side]=skinRotate(foot,ankle,pitches[side]);
+  }
+  return {joints,contacts,phase:stage,walking,tuck,correction};
+}
+export function headContains(id,frame,p){
+  const r=SOURCE_RIGS[id][frame],h=r.head,n=r.neck;
+  if(p.x<Math.min(h.x,n.x)-(id==='lieying'?76:62)||p.x>Math.max(h.x,n.x)+54||p.y<h.y-75||p.y>n.y-4)return false;
+  if(p.y>h.y+15&&Math.min(distanceBone(p,r.wristN,r.handN),distanceBone(p,r.wristF,r.handF))<13)return false;
+  return true;
+}
+export function partContains(id,frame,p,part,color=null){
+  const r=SOURCE_RIGS[id][frame],head=headContains(id,frame,p);
+  if(part==='head')return head;
+  if(head)return false;
+  if(part===null)return true;
+  if(part==='body')return p.y<r.hip.y+24||(id==='hanfeng'&&color&&color[0]>color[1]*1.35&&color[0]>color[2]*1.1&&p.y<r.hip.y+93&&p.x>r.hipF.x+12&&p.x<r.hipN.x+42);
+  if(p.y<r.hip.y-18)return false;
+  const split=(r.hipN.x+r.hipF.x)/2;
+  return part==='N'?p.x>=split:p.x<split;
+}
+export function partWeights(id,frame,p,part=null){
+  if(part==='head')return {bones:[1,0,0,0],weights:[1,0,0,0]};
+  if(part===null)return vertexWeights(id,frame,p);
+  const bones=part==='N'?[8,9,10]:part==='F'?[11,12,13]:[0,1,2,3,4,5,6,7];
+  const r=SOURCE_RIGS[id][frame],scores=bones.map(bone=>{const [a,b]=SKIN_BONES[bone];return {bone,score:1/Math.pow(2+distanceBone(p,r[a],r[b]),5)};}).sort((a,b)=>b.score-a.score).slice(0,4);
+  if(part==='N'||part==='F'){
+    const ankle=r[part==='N'?'ankleN':'ankleF'];
+    if(p.y>ankle.y-16)return {bones:[part==='N'?10:13,0,0,0],weights:[1,0,0,0]};
+  }
+  const sum=scores.reduce((a,b)=>a+b.score,0),out={bones:scores.map(x=>x.bone),weights:scores.map(x=>x.score/sum)};
+  while(out.bones.length<4){out.bones.push(0);out.weights.push(0);}return out;
 }
 // Affine bone transforms map original atlas coordinates to the evaluated pose.
 // Separate matrices keep face/hair, hands and shoes rigid at their attachment.
@@ -135,10 +213,15 @@ export function vertexWeights(id,frame,p) {
   const sum=scores.reduce((s,x)=>s+x.score,0);
   return {bones:scores.map(x=>x.bone),weights:scores.map(x=>x.score/sum)};
 }
-export function createSkinMesh(id,frame,cells=56) {
-  const vertices=[],indices=[];
+export function createSkinMesh(id,frame,cells=56,part=null) {
+  const vertices=[],indices=[],r=SOURCE_RIGS[id][frame];
+  let bounds=[0,0,SOURCE_CELL,SOURCE_CELL];
+  if(part==='head')bounds=[Math.max(0,Math.min(r.head.x,r.neck.x)-(id==='lieying'?76:62)),Math.max(0,r.head.y-75),Math.min(SOURCE_CELL,Math.max(r.head.x,r.neck.x)+54),r.neck.y-4];
+  else if(part==='N')bounds=[(r.hipN.x+r.hipF.x)/2,r.hip.y-18,SOURCE_CELL,SOURCE_CELL];
+  else if(part==='F')bounds=[0,r.hip.y-18,(r.hipN.x+r.hipF.x)/2,SOURCE_CELL];
+  else if(part==='body')bounds=[0,0,SOURCE_CELL,Math.min(SOURCE_CELL,r.hip.y+(id==='hanfeng'?93:24))];
   for(let y=0;y<=cells;y++)for(let x=0;x<=cells;x++){
-    const px=x/cells*SOURCE_CELL,py=y/cells*SOURCE_CELL,w=vertexWeights(id,frame,{x:px,y:py});
+    const px=skinMix(bounds[0],bounds[2],x/cells),py=skinMix(bounds[1],bounds[3],y/cells),w=partWeights(id,frame,{x:px,y:py},part);
     vertices.push(px,py,(frame%4+px/SOURCE_CELL)/4,(Math.floor(frame/4)+py/SOURCE_CELL)/2,...w.bones,...w.weights);
   }
   for(let y=0;y<cells;y++)for(let x=0;x<cells;x++){const a=y*(cells+1)+x,b=a+1,c=a+cells+1,d=c+1;indices.push(a,b,c,b,d,c);}

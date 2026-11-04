@@ -1,3 +1,5 @@
+import { WALK, JUMP } from './motion.js';
+
 export const WORLD = { width: 1600, height: 760, floor: 688, strikeHeight: 420 };
 export const CHARACTERS = {
   lieying: { id: 'lieying', name: '烈影', subtitle: '赤焰疾风', color: '#ffca32', accent: '#ff572c', style: '速度型', speed: 320, power: 1, description: '金焰破空，流火突进。以连续进攻撕开防线。', special: '赤焰掌', skill: '流火冲拳' },
@@ -45,7 +47,7 @@ export class Game {
   emit(type, data = {}) { this.onEvent({ type, ...data }); }
 
   fighter(id, x, facing) {
-    return { id, x, y: 0, vy: 0, facing, hp: 100, energy: 30, attack: null, stun: 0, blocking: false, walking: false, walkBlend: 0, stride: 0, combo: 0, comboTimer: 0, hitFlash: 0, aiTimer: .9, invincible: 0, knockback: 0 };
+    return { id, x, y: 0, vy: 0, facing, hp: 100, energy: 30, attack: null, stun: 0, blocking: false, walking: false, walkBlend: 0, stride: 0, jumpPhase: 'ground', jumpClock: 0, jumpVelocity: JUMP.velocity, combo: 0, comboTimer: 0, hitFlash: 0, aiTimer: .9, invincible: 0, knockback: 0 };
   }
 
   resetRound() {
@@ -107,7 +109,7 @@ export class Game {
   attack(index, type) {
     const f = this.fighters[index];
     const move = attackFor(f.id, type);
-    if (!move || this.state !== 'playing' || this.paused || f.attack || f.stun > 0 || f.hp <= 0) return false;
+    if (!move || this.state !== 'playing' || this.paused || f.attack || f.stun > 0 || f.hp <= 0 || f.jumpPhase === 'prepare') return false;
     if (move.cost && f.energy < move.cost) {
       if (index === 0) this.emit('lowEnergy', { cost: move.cost });
       return false;
@@ -121,10 +123,11 @@ export class Game {
 
   jump(index) {
     const f = this.fighters[index];
-    if (this.state !== 'playing' || this.paused || f.y > .1 || f.stun > 0 || f.attack) return false;
-    f.vy = 790;
+    if (this.state !== 'playing' || this.paused || f.y > .1 || f.stun > 0 || f.attack || f.jumpPhase !== 'ground') return false;
+    f.jumpPhase = 'prepare';
+    f.jumpClock = 0;
+    f.vy = 0;
     f.blocking = false;
-    this.emit('jump', { index });
     return true;
   }
 
@@ -166,8 +169,8 @@ export class Game {
 
   controlPlayer(dt) {
     const f = this.fighters[0];
-    f.blocking = Boolean(this.input.block && f.y === 0 && !f.attack && f.stun <= 0);
-    f.walking = !f.blocking && !f.attack && f.stun <= 0 && this.input.left !== this.input.right;
+    f.blocking = Boolean(this.input.block && f.y === 0 && f.jumpPhase === 'ground' && !f.attack && f.stun <= 0);
+    f.walking = !f.blocking && !f.attack && f.stun <= 0 && f.jumpPhase !== 'prepare' && f.jumpPhase !== 'land' && this.input.left !== this.input.right;
     f.move = f.walking ? (this.input.right ? 1 : -1) : 0;
     for (const action of ['jump', 'special', 'skill', 'kick', 'punch']) {
       if (this.input[action]) { this.bufferedActions[action] = .16; this.input[action] = false; }
@@ -211,24 +214,37 @@ export class Game {
 
   updateFighter(index, dt) {
     const f = this.fighters[index], other = this.fighters[1 - index];
-    f.walkBlend += Math.max(-dt * 8, Math.min(dt * 8, (f.walking && !f.attack && !f.stun ? 1 : 0) - f.walkBlend));
     f.hitFlash = Math.max(0, f.hitFlash - dt);
     f.stun = Math.max(0, f.stun - dt);
     f.invincible = Math.max(0, f.invincible - dt);
     f.comboTimer -= dt;
     if (f.comboTimer <= 0) f.combo = 0;
     this.comboLife[index] = Math.max(0, this.comboLife[index] - dt);
-    if (!f.attack) f.facing = other.x >= f.x ? 1 : -1;
+    if (!f.attack && f.jumpPhase !== 'air') f.facing = other.x >= f.x ? 1 : -1;
+    f.jumpClock += dt;
+    if (f.jumpPhase === 'prepare') {
+      if (f.stun > 0) { f.jumpPhase = 'ground'; f.jumpClock = 0; }
+      else if (f.jumpClock >= JUMP.prepare) {
+        f.jumpPhase = 'air'; f.jumpClock = 0; f.vy = JUMP.velocity; f.jumpVelocity = JUMP.velocity;
+        this.emit('jump', { index });
+      }
+    } else if (f.jumpPhase === 'land' && f.jumpClock >= JUMP.land) {
+      f.jumpPhase = 'ground'; f.jumpClock = 0;
+    }
     if (f.y > 0 || f.vy > 0) {
+      if (f.jumpPhase !== 'air') { f.jumpPhase = 'air'; f.jumpClock = 0; f.jumpVelocity = Math.max(f.vy, JUMP.velocity); }
       f.y += f.vy * dt;
-      f.vy -= 2100 * dt;
-      if (f.y <= 0) { f.y = 0; f.vy = 0; this.emit('land', { index }); }
+      f.vy -= JUMP.gravity * dt;
+      if (f.y <= 0) { f.y = 0; f.vy = 0; f.jumpPhase = 'land'; f.jumpClock = 0; this.emit('land', { index }); }
     }
-    if (f.stun <= 0 && !f.attack && !f.blocking) {
+    const beforeMove = f.x;
+    if (f.stun <= 0 && !f.attack && !f.blocking && f.jumpPhase !== 'prepare' && f.jumpPhase !== 'land') {
       const travel = (f.move || 0) * CHARACTERS[f.id].speed * dt;
-      f.x += travel;
-      f.stride += Math.abs(travel) / 94 * Math.PI * 2;
+      f.x = clamp(f.x + travel, 175, WORLD.width - 175);
+      if (f.y === 0) f.stride += (f.x - beforeMove) * f.facing / WALK.stride * Math.PI * 2;
     }
+    const walkTarget = f.y === 0 && f.jumpPhase === 'ground' && Math.abs(f.x - beforeMove) > .001 && f.walking ? 1 : 0;
+    f.walkBlend += Math.max(-dt / WALK.blendTime, Math.min(dt / WALK.blendTime, walkTarget - f.walkBlend));
     f.x += f.knockback * dt;
     f.knockback *= Math.exp(-11 * dt);
     f.x = clamp(f.x, 175, WORLD.width - 175);
@@ -249,7 +265,7 @@ export class Game {
       this.emit('projectile', { index, effect: move.effect });
     } else if (a.type !== 'special' && !a.connected && a.time >= move.active && a.time <= move.end) {
       const ahead = (other.x - f.x) * a.direction;
-      if (ahead > 0 && ahead < move.reach && Math.abs(f.y - other.y) < 175) {
+      if (ahead > 0 && ahead < move.reach && Math.abs(f.y - other.y) < 105) {
         a.connected = true;
         this.hit(index, a.type, other.x - a.direction * 45, WORLD.floor - other.y - WORLD.strikeHeight, a.direction);
       }
@@ -260,7 +276,7 @@ export class Game {
   resolveBodies() {
     const [a, b] = this.fighters;
     const dx = b.x - a.x;
-    if (Math.abs(dx) < 115 && Math.abs(a.y - b.y) < 230) {
+    if (Math.abs(dx) < 115 && Math.abs(a.y - b.y) < 90) {
       const push = (115 - Math.abs(dx)) * .5, direction = dx >= 0 ? 1 : -1;
       a.x = clamp(a.x - push * direction, 175, WORLD.width - 175);
       b.x = clamp(b.x + push * direction, 175, WORLD.width - 175);
@@ -273,7 +289,7 @@ export class Game {
       p.life -= dt;
       p.x += p.direction * (p.speed || 890) * dt;
       const target = this.fighters[1 - p.owner];
-      if (!p.hit && Math.abs(p.x - target.x) < (p.radius || 70) + 15 && Math.abs(p.y - (target.y + WORLD.strikeHeight)) < 155) {
+      if (!p.hit && Math.abs(p.x - target.x) < (p.radius || 70) + 15 && Math.abs(p.y - (target.y + WORLD.strikeHeight)) < 105) {
         p.hit = true;
         this.hit(p.owner, 'special', target.x, WORLD.floor - p.y, p.direction);
       }

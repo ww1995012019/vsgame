@@ -37,7 +37,7 @@ test('mesh influences stay normalized and reference valid bones',()=>{
   }
 });
 
-test('original attack attachments share a continuous evaluated skeleton and recover to rest',()=>{
+test('attack attachments retain painted proportions and recover to rest',()=>{
   for(const id of Object.keys(SOURCE_RIGS))for(const [type,duration] of [['punch',.31],['kick',.53],['special',.75],['skill',.78]]){
     for(let t=0;t<duration;t+=1/120){
       const pose=originalPoseFor({id,attack:{type,time:t},y:0},t);
@@ -50,7 +50,7 @@ test('original attack attachments share a continuous evaluated skeleton and reco
 
 test('idle breathing keeps the source soles planted',()=>{
   for(const id of Object.keys(SOURCE_RIGS)){
-    const base=worldJoints(id,0);
+    const base=originalPoseFor({id,y:0,walkBlend:0},0).joints;
     for(let t=0;t<7;t+=.05){const {joints}=originalPoseFor({id,y:0,walkBlend:0},t);for(const side of ['N','F'])assert.ok(distance(joints['ankle'+side],base['ankle'+side])<.01);}
   }
 });
