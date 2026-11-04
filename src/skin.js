@@ -11,7 +11,7 @@ export class OriginalSkin {
     this.meshes=Array.from({length:8},(_,frame)=>createSkinMesh(id,frame,cells));
     this.headMeshes=Array.from({length:8},(_,frame)=>createSkinMesh(id,frame,1,'head'));
     this.parts=Object.fromEntries(['F','N','body'].map(part=>[part,createSkinMesh(id,0,this.gl?42:16,part)]));
-    this.gpuBuffers=new Map();this.partTextures=new Map();
+    this.channelMeshes=new Map();this.gpuBuffers=new Map();this.partTextures=new Map();
     if(this.gl)this.initializeGL();
     else{this.canvas=document.createElement('canvas');this.canvas.width=SKIN_SURFACE.width;this.canvas.height=SKIN_SURFACE.height;this.ctx=this.canvas.getContext('2d');}
   }
@@ -19,14 +19,15 @@ export class OriginalSkin {
     const gl=this.gl;
     const compile=(type,source)=>{const shader=gl.createShader(type);gl.shaderSource(shader,source);gl.compileShader(shader);if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(shader));return shader;};
     const vertex=compile(gl.VERTEX_SHADER,`attribute vec2 aPosition;attribute vec2 aUV;attribute vec2 aWorld;uniform mat3 uView;varying vec2 vUV;varying vec2 vSource;void main(){vec3 projected=uView*vec3(aWorld,1.0);gl_Position=vec4(projected.xy,0.0,1.0);vUV=aUV;vSource=aPosition;}`);
-    const fragment=compile(gl.FRAGMENT_SHADER,`precision highp float;uniform sampler2D uImage;uniform vec2 uRig[19];uniform int uPart;uniform float uFemale;uniform float uOpacity;varying vec2 vUV;varying vec2 vSource;
+    const fragment=compile(gl.FRAGMENT_SHADER,`precision highp float;uniform sampler2D uImage;uniform vec2 uRig[19];uniform int uPart;uniform int uFrame;uniform float uFemale;uniform float uOpacity;varying vec2 vUV;varying vec2 vSource;
     float segmentDistance(vec2 p,vec2 a,vec2 b){vec2 d=b-a;float t=clamp(dot(p-a,d)/dot(d,d),0.0,1.0);return length(p-a-d*t);}
     void main(){vec4 color=texture2D(uImage,vUV);vec2 p=vSource;vec2 h=uRig[2];vec2 n=uRig[1];
-      bool head=p.x>=min(h.x,n.x)-(uFemale>.5?76.0:62.0)&&p.x<=max(h.x,n.x)+54.0&&p.y>=h.y-75.0&&p.y<=n.y-4.0;
+      bool head=p.x>=(uFemale>.5?min(h.x,n.x)-76.0:h.x-52.0)&&p.x<=max(h.x,n.x)+54.0&&p.y>=h.y-75.0&&p.y<=n.y-4.0;
+      if(head&&p.y>h.y+8.0){float t=clamp((p.y-h.y-8.0)/(n.y-4.0-h.y-8.0),0.0,1.0);if(abs(p.x-mix(h.x,n.x,t))>mix(uFemale>.5?55.0:44.0,16.0,t))head=false;}
       if(head&&p.y>h.y+15.0&&min(segmentDistance(p,uRig[5],uRig[6]),segmentDistance(p,uRig[9],uRig[10]))<13.0)head=false;
       if(uPart==3){if(!head)discard;}else{
         if(head)discard;
-        if(uPart==0){bool belt=uFemale<.5&&color.r>color.g*1.35&&color.r>color.b*1.1&&p.y<uRig[0].y+93.0&&p.x>uRig[15].x+12.0&&p.x<uRig[11].x+42.0;if(p.y>=uRig[0].y+24.0&&!belt)discard;}
+        if(uPart==0){bool belt=uFemale<.5&&color.r>color.g*1.35&&color.r>color.b*1.1&&p.y<uRig[0].y+93.0&&p.x>uRig[15].x+12.0&&p.x<uRig[11].x+42.0;float hem=uRig[0].y+(uFemale<.5&&uFrame==3?-8.0:24.0);if(p.y>=hem&&!belt)discard;}
         if(uPart==1||uPart==2){if(p.y<uRig[0].y-18.0)discard;
           float split=(uRig[11].x+uRig[15].x)*.5;
           if(uPart==1&&p.x<split)discard;if(uPart==2&&p.x>=split)discard;
@@ -39,7 +40,7 @@ export class OriginalSkin {
     gl.useProgram(program);this.program=program;
     this.attributes=['aPosition','aUV','aWorld'].map(x=>gl.getAttribLocation(program,x));
     this.viewUniform=gl.getUniformLocation(program,'uView');this.opacityUniform=gl.getUniformLocation(program,'uOpacity');
-    this.rigUniform=gl.getUniformLocation(program,'uRig[0]');this.partUniform=gl.getUniformLocation(program,'uPart');
+    this.rigUniform=gl.getUniformLocation(program,'uRig[0]');this.partUniform=gl.getUniformLocation(program,'uPart');this.frameUniform=gl.getUniformLocation(program,'uFrame');
     gl.uniform1f(gl.getUniformLocation(program,'uFemale'),this.id==='lieying'?1:0);
     const texture=gl.createTexture();this.texture=texture;gl.bindTexture(gl.TEXTURE_2D,texture);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,true);
     gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.image);
@@ -48,6 +49,12 @@ export class OriginalSkin {
     gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);if(!this.shared)gl.viewport(0,0,800,720);
   }
   passes(pose){
+    if(pose.channels)return pose.channels.map(channel=>{
+      const {frame,part}=channel,key=frame+':'+part;
+      let mesh=part==='head'?this.headMeshes[frame]:part==='full'?this.meshes[frame]:frame===0?this.parts[part]:this.channelMeshes.get(key);
+      if(!mesh){mesh=createSkinMesh(this.id,frame,this.gl?42:16,part);this.channelMeshes.set(key,mesh);}
+      return {...channel,mesh};
+    });
     const frame=pose.attachment??pose.frames[0].frame;
     return pose.layered?[{frame:0,part:'F',mesh:this.parts.F},{frame:0,part:'N',mesh:this.parts.N},{frame:0,part:'body',mesh:this.parts.body},{frame:0,part:'head',mesh:this.headMeshes[0]}]:[{frame,part:'full',mesh:this.meshes[frame]},{frame,part:'head',mesh:this.headMeshes[frame]}];
   }
@@ -69,18 +76,17 @@ export class OriginalSkin {
     gl.uniformMatrix3fv(this.viewUniform,false,view);gl.uniform1f(this.opacityUniform,opacity);
     if(this.lastPose!==pose){this.lastPose=pose;this.poseMatrices=new Map();}
     let lastFrame=-1;
-    for(const {frame,part,mesh} of this.passes(pose)){
+    for(const {frame,part,mesh,joints=pose.joints} of this.passes(pose)){
+      const matrixKey=frame+':'+part;
+      if(!this.poseMatrices.has(matrixKey))this.poseMatrices.set(matrixKey,boneMatrices(this.id,frame,joints));
       if(frame!==lastFrame){
-        if(!this.poseMatrices.has(frame)){
-          const matrices=boneMatrices(this.id,frame,pose.joints);
-          this.poseMatrices.set(frame,matrices);
-        }
+        gl.uniform1i(this.frameUniform,frame);
         gl.uniform2fv(this.rigUniform,new Float32Array(JOINT_NAMES.flatMap(key=>[SOURCE_RIGS[this.id][frame][key].x,SOURCE_RIGS[this.id][frame][key].y])));lastFrame=frame;
       }
       gl.uniform1i(this.partUniform,PART_CODE[part]);
       const buffer=this.bufferFor(mesh);
       if(buffer.lastPose!==pose){
-        const source=mesh.vertices,matrices=this.poseMatrices.get(frame),output=buffer.positions;
+        const source=mesh.vertices,matrices=this.poseMatrices.get(matrixKey),output=buffer.positions;
         for(let k=0,n=0;k<source.length;k+=12,n+=2){
           let x=0,y=0;const px=source[k],py=source[k+1];
           for(let j=0;j<4;j++){const weight=source[k+8+j];if(weight===0)continue;const m=matrices[source[k+4+j]];x+=(m[0]*px+m[2]*py+m[4])*weight;y+=(m[1]*px+m[3]*py+m[5])*weight;}
@@ -107,8 +113,8 @@ export class OriginalSkin {
   }
   renderCanvas(pose){
     const c=this.ctx;c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,800,720);c.globalCompositeOperation='source-over';
-    for(const {frame,part,mesh} of this.passes(pose)){
-      const matrices=boneMatrices(this.id,frame,pose.joints),v=mesh.vertices,texture=this.textureFor(frame,part);
+    for(const {frame,part,mesh,joints=pose.joints} of this.passes(pose)){
+      const matrices=boneMatrices(this.id,frame,joints),v=mesh.vertices,texture=this.textureFor(frame,part);
       const mapped=Array.from({length:v.length/12},(_,i)=>{const k=i*12;return skinVertex(v[k],v[k+1],[...v.slice(k+4,k+8)],[...v.slice(k+8,k+12)],matrices);});
       for(let i=0;i<mesh.indices.length;i+=3){
         const ids=[mesh.indices[i],mesh.indices[i+1],mesh.indices[i+2]],s=ids.map(n=>({x:v[n*12],y:v[n*12+1]})),d=ids.map(n=>({x:mapped[n].x+400,y:mapped[n].y+640}));

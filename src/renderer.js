@@ -11,6 +11,7 @@ export class Renderer {
     this.skins = {};
     this.rainEnabled = true;
     this.showBones = false;
+    this.showCombatDebug = false;
     this.shakeEnabled = true;
     this.reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.rain = Array.from({ length: 86 }, () => ({ x: Math.random() * 1600, y: Math.random() * 760, speed: 450 + Math.random() * 500, length: 8 + Math.random() * 23, alpha: .06 + Math.random() * .13 }));
@@ -63,6 +64,26 @@ export class Renderer {
     if (game.state === 'playing') {
       for (const f of game.fighters) if (f.energy >= 50) this.drawAura(ctx, f);
     }
+    if (this.showCombatDebug) this.drawCombatDebug(ctx);
+  }
+
+  drawCombatDebug(ctx) {
+    const snapshot = this.game.getDebugSnapshot?.();
+    if (!snapshot) return;
+    ctx.save();
+    const draw = (box, color, fill) => {
+      if (!box || !Number.isFinite(box.x) || !Number.isFinite(box.y)) return;
+      ctx.fillStyle = fill; ctx.strokeStyle = color; ctx.lineWidth = 2;
+      ctx.fillRect(box.x, box.y, box.width, box.height);
+      ctx.strokeRect(box.x, box.y, box.width, box.height);
+    };
+    for (const f of snapshot.fighters) {
+      draw(f.pushbox, '#ffd369', '#ffd36914');
+      for (const box of f.hurtboxes || []) draw(box, '#65d5ff', '#65d5ff12');
+      for (const box of f.hitboxes || []) draw(box, '#ff7373', '#ff434338');
+    }
+    for (const box of snapshot.projectileHitboxes || []) draw(box, '#ff9e54', '#ff9e5425');
+    ctx.restore();
   }
 
   drawAmbient(ctx, dt) {

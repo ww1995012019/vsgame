@@ -1,4 +1,6 @@
 import { WALK, JUMP } from './motion.js';
+import { attackFor } from './engine.js';
+import { movePhase } from './combat.js';
 
 // Original artwork is the skin. These joints refer to the repository's unchanged
 // atlas cells normalized to 448 units; the original PNGs are 1774 x 887.
@@ -57,42 +59,87 @@ export function twoBoneIK(root,target,upper,lower,bend=1) {
   const along=(upper*upper-lower*lower+d*d)/(2*d),height=Math.sqrt(Math.max(0,upper*upper-along*along));
   return [{x:root.x+ux*along+uy*height*bend,y:root.y+uy*along-ux*height*bend},{x:root.x+ux*d,y:root.y+uy*d}];
 }
+const LEG_JOINTS=['hipN','kneeN','ankleN','toeN','hipF','kneeF','ankleF','toeF'];
+const stateWeight=(f,exit=1)=>smoothSkin(Math.min((f.stateTime??.1)/.08,exit));
 function poseFrames(f,index,result) {
-  if (result && result.winner===index) return [{frame:6,weight:1}];
-  if (f.stun>0 && !f.blocking) return [{frame:5,weight:1}];
-  if (f.blocking) return [{frame:4,weight:1}];
+  const weighted=(frame,weight)=>[{frame:0,weight:1-weight},{frame,weight}].filter(x=>x.weight>0);
+  if (result && result.winner===index) return weighted(6,smoothSkin((result.age||0)/.16));
+  if (f.stun>0 && !f.blocking) return weighted(5,stateWeight(f,f.stun/.08));
+  if (f.blocking || f.state==='Block') return weighted(4,stateWeight(f));
+  // The crouch source paints both raised knees across the waist. Mixing its
+  // upper crop with independently posed legs would duplicate the trousers.
+  // Use the standing skin with the same planted-foot crouch IK instead.
+  if ((f.crouchBlend??0)>0 || f.state==='Crouch') return [{frame:0,weight:1}];
   if (f.attack) {
-    const a=f.attack, data={punch:[1,.09,.20,.31],kick:[2,.18,.32,.53],special:[3,.23,.4,.75],skill:[f.id==='lieying'?1:6,.24,.43,.78]}[a.type];
-    const [frame,active,end,duration]=data;
+    const a=f.attack,move=a.move||attackFor(f.id,a.type),frame=move.frame??(a.type==='skill'?(f.id==='lieying'?1:6):0);
+    const {active,end,duration}=move;
     const weight=a.time<active?smoothSkin(a.time/active):a.time>end?1-smoothSkin((a.time-end)/(duration-end)):1;
-    return [{frame:0,weight:1-weight},{frame,weight}].filter(x=>x.weight>.0001);
+    return weighted(frame,weight);
   }
   return [{frame:0,weight:1}];
 }
 export function originalPoseFor(f,elapsed=0,index=0,result=null,reducedMotion=false) {
-  const frames=poseFrames(f,index,result);
-  let joints=worldJoints(f.id,frames[0].frame);
-  if(frames.length>1)joints=mixJoints(joints,worldJoints(f.id,frames[1].frame),frames[1].weight);
-  const attachment=frames.reduce((a,b)=>a.weight>=b.weight?a:b).frame;
-  const layered=!f.attack && !f.stun && !f.blocking && !result;
-  let motion=null;
-  if(layered){motion=locomotionPose(f,elapsed,index,reducedMotion);joints=motion.joints;}
-  else {
-    // Different painted poses do not contain compatible hidden arm/torso pixels.
-    // Keep each attachment's proportions, with continuous root movement and
-    // bounded FK accents; never stretch a guard texture into an uppercut.
-    const root={...joints.hip},source=worldJoints(f.id,attachment);
-    joints=copyJoints(source);
-    for(const p of Object.values(joints)){p.x+=root.x-source.hip.x;p.y+=root.y-source.hip.y;}
-    if(f.attack && !reducedMotion){
-      const duration={punch:.31,kick:.53,special:.75,skill:.78}[f.attack.type];
-      const accent=Math.sin(Math.PI*Math.max(0,Math.min(1,f.attack.time/duration)))*.025;
-      const side=f.attack.type==='skill'&&f.id==='hanfeng'?'N':'F';
-      for(const name of ['elbow','wrist','hand'])joints[name+side]=skinRotate(joints[name+side],joints['shoulder'+side],accent);
+  if(f.attack&&f.attack.time>=(f.attack.move||attackFor(f.id,f.attack.type)).duration)return originalPoseFor({...f,attack:null},elapsed,index,result,reducedMotion);
+  let frames=poseFrames(f,index,result);
+  // Always evaluate the feet, including while an airborne fighter attacks or is
+  // hit. Selecting a painted attack must never replace the jump's lower body.
+  const motion=locomotionPose(f,elapsed,index,reducedMotion),base=motion.joints;
+  const action=frames.find(p=>p.frame!==0),weight=action?.weight||0;
+  const move=f.attack&&(f.attack.move||attackFor(f.id,f.attack.type));
+  // A move keeps its extended source attachment throughout startup/recovery.
+  // Folding an extended arm is safer than stretching the short, foreshortened
+  // guard forearm into a punch, and avoids a mid-startup texture switch.
+  let attachment=action?.frame??(f.attack?(move.frame??(f.id==='hanfeng'&&f.attack.type==='skill'?6:1)):0);
+  const airborne=f.y>0||f.jumpPhase==='air';
+  const airKick=f.attack?.type==='kick'&&(f.attack.airborne||airborne||f.jumpPhase==='land');
+  const groundKick=f.attack?.type==='kick'&&!airKick;
+  // No suitable separated air-kick source exists in the eight-pose atlas.
+  // Keep the airborne guard torso instead of dragging its painted raised leg
+  // through the shirt. Its lower body remains the jumping skeleton.
+  if(airKick)attachment=0;
+  // Hanfeng's foreshortened shoulder occludes parts of his vest. The source
+  // lacks those hidden pixels: inverse bending still tears that seam. Keep
+  // his original key poses rigid, switching at the actual active window,
+  // rather than inventing smoothness by stretching or crossfading two bodies.
+  const originalKeyframes=f.id==='hanfeng';
+  if(originalKeyframes){
+    attachment=f.attack?(airKick?0:movePhase(move,f.attack.time)==='active'?move.frame:0):weight>=.5?attachment:0;
+    frames=[{frame:attachment,weight:1}];
+  }
+  const source=worldJoints(f.id,attachment),target=copyJoints(source);
+  const rest=worldJoints(f.id,0),offset=groundKick
+    ?{x:base.hip.x-rest.hip.x,y:base.hip.y-rest.hip.y}
+    :{x:base.hip.x-source.hip.x,y:base.hip.y-source.hip.y};
+  for(const p of Object.values(target)){p.x+=offset.x;p.y+=offset.y;}
+  let joints=originalKeyframes&&attachment!==0?copyJoints(target):mixJoints(base,target,attachment===0?0:weight);
+  if(!groundKick)for(const key of LEG_JOINTS)joints[key]={...base[key]};
+  if(attachment!==0&&!originalKeyframes){
+    // The shoulder seam belongs to this painted torso. Pin it to the same
+    // affine torso transform instead of pulling it to a different atlas pose's
+    // shoulder: that gap otherwise exposes a triangular hole in Hanfeng's vest.
+    const torso=boneMatrices(f.id,attachment,joints)[0];
+    for(const side of ['N','F']){const p=SOURCE_RIGS[f.id][attachment]['shoulder'+side];joints['shoulder'+side]={x:torso[0]*p.x+torso[2]*p.y+torso[4],y:torso[1]*p.x+torso[3]*p.y+torso[5]};}
+    for(const side of ['N','F'])for(const [start,end,children] of [['shoulder','elbow',['wrist','hand']],['elbow','wrist',['hand']]]){
+      const a=joints[start+side],b=joints[end+side],sa=source[start+side],sb=source[end+side];
+      const length=Math.hypot(b.x-a.x,b.y-a.y),limit=Math.hypot(sb.x-sa.x,sb.y-sa.y)*1.2;
+      if(length>limit){const dx=(b.x-a.x)*(limit/length-1),dy=(b.y-a.y)*(limit/length-1);b.x+=dx;b.y+=dy;for(const child of children){joints[child+side].x+=dx;joints[child+side].y+=dy;}}
     }
   }
+  // Draw exactly one head. Rigid original key poses use their own matching
+  // original head, so any overlapping shoulder pixels rejoin their own body;
+  // the interpolated fighter keeps one source-0 face throughout the motion.
+  const headFrame=originalKeyframes?attachment:0;
+  const paintedGroundKick=groundKick&&(!originalKeyframes||attachment!==0);
+  const channels=paintedGroundKick
+    ?[{frame:attachment,part:'full',joints},{frame:headFrame,part:'head',joints}]
+    :[{frame:0,part:'F',joints:base},{frame:0,part:'N',joints:base},
+      {frame:attachment,part:'body',joints},{frame:headFrame,part:'head',joints}];
   const effectSide=f.attack?.type==='skill' && f.id==='hanfeng'?(joints.wristN.y<joints.wristF.y?'N':'F'):'F';
-  return {frames,attachment,joints,layered,motion,effectHand:joints['hand'+effectSide]};
+  const resourceLimits=[];
+  if(airKick)resourceLimits.push('air-kick retains jump guard: no separated air-kick source');
+  if(originalKeyframes&&attachment!==0)resourceLimits.push('original upper-body key poses: separated shoulder and in-between artwork is not present');
+  if(['Knockdown','GetUp'].includes(f.state))resourceLimits.push('dedicated knockdown/get-up artwork is not present');
+  return {frames,attachment,joints,layered:true,motion,channels,resourceLimits,effectHand:joints['hand'+effectSide]};
 }
 // Sole heights measured from the unchanged source alpha silhouettes (world units).
 export const SOLE_LIFT={lieying:{N:2.21,F:2.21},hanfeng:{N:6.53,F:3.70}};
@@ -116,6 +163,8 @@ export function locomotionPose(f,elapsed=0,index=0,reducedMotion=false){
     tuck=Math.sin(t*Math.PI)**2;stage=(f.vy||0)>110?'rise':(f.vy||0)<-110?'fall':'apex';
     drop=16*(1-smoothSkin((f.jumpClock||0)/.10));
   }else if(phase==='land'){stage='land';drop=16*Math.sin(Math.PI*Math.min(1,(f.jumpClock||0)/JUMP.land));}
+  const crouch=smoothSkin(f.crouchBlend??(f.state==='Crouch'?stateWeight(f):0));
+  if(crouch>0&&phase==='ground'){stage='crouch';drop+=104*crouch;}
   for(const p of Object.values(joints))p.y+=rootLift+drop;
   const breath=reducedMotion?0:Math.sin(elapsed*3.6+index*1.7);
   const lean=breath*.004+walking*(f.move||0)*(f.facing||1)*.025+tuck*.035;
@@ -153,7 +202,10 @@ export function locomotionPose(f,elapsed=0,index=0,reducedMotion=false){
 }
 export function headContains(id,frame,p){
   const r=SOURCE_RIGS[id][frame],h=r.head,n=r.neck;
-  if(p.x<Math.min(h.x,n.x)-(id==='lieying'?76:62)||p.x>Math.max(h.x,n.x)+54||p.y<h.y-75||p.y>n.y-4)return false;
+  if(p.x<(id==='lieying'?Math.min(h.x,n.x)-76:h.x-52)||p.x>Math.max(h.x,n.x)+54||p.y<h.y-75||p.y>n.y-4)return false;
+  // Taper below the jaw. A rectangular hair crop also captured the white
+  // shoulder trim, which then floated beside the neck on another body pose.
+  if(p.y>h.y+8){const t=Math.max(0,Math.min(1,(p.y-h.y-8)/(n.y-4-h.y-8))),center=skinMix(h.x,n.x,t),radius=skinMix(id==='lieying'?55:44,16,t);if(Math.abs(p.x-center)>radius)return false;}
   if(p.y>h.y+15&&Math.min(distanceBone(p,r.wristN,r.handN),distanceBone(p,r.wristF,r.handF))<13)return false;
   return true;
 }
@@ -162,7 +214,7 @@ export function partContains(id,frame,p,part,color=null){
   if(part==='head')return head;
   if(head)return false;
   if(part===null)return true;
-  if(part==='body')return p.y<r.hip.y+24||(id==='hanfeng'&&color&&color[0]>color[1]*1.35&&color[0]>color[2]*1.1&&p.y<r.hip.y+93&&p.x>r.hipF.x+12&&p.x<r.hipN.x+42);
+  if(part==='body')return p.y<r.hip.y+(id==='hanfeng'&&frame===3?-8:24)||(id==='hanfeng'&&color&&color[0]>color[1]*1.35&&color[0]>color[2]*1.1&&p.y<r.hip.y+93&&p.x>r.hipF.x+12&&p.x<r.hipN.x+42);
   if(p.y<r.hip.y-18)return false;
   const split=(r.hipN.x+r.hipF.x)/2;
   return part==='N'?p.x>=split:p.x<split;
@@ -170,8 +222,16 @@ export function partContains(id,frame,p,part,color=null){
 export function partWeights(id,frame,p,part=null){
   if(part==='head')return {bones:[1,0,0,0],weights:[1,0,0,0]};
   if(part===null)return vertexWeights(id,frame,p);
+  const r=SOURCE_RIGS[id][frame];
+  // A painted vest/jacket inside the shoulder line belongs to the torso. A
+  // nearest-bone search alone incorrectly attaches its collar to the punching
+  // upper arm and folds the shirt into a dark hole during startup.
+  if(part==='body'&&p.x>Math.min(r.shoulderN.x,r.shoulderF.x)+16&&p.x<Math.max(r.shoulderN.x,r.shoulderF.x)-3&&p.y>r.neck.y-4&&p.y<r.hip.y+30){
+    const handDistance=Math.min(distanceBone(p,r.wristN,r.handN),distanceBone(p,r.wristF,r.handF));
+    if(handDistance>12)return {bones:[0,0,0,0],weights:[1,0,0,0]};
+  }
   const bones=part==='N'?[8,9,10]:part==='F'?[11,12,13]:[0,1,2,3,4,5,6,7];
-  const r=SOURCE_RIGS[id][frame],scores=bones.map(bone=>{const [a,b]=SKIN_BONES[bone];return {bone,score:1/Math.pow(2+distanceBone(p,r[a],r[b]),5)};}).sort((a,b)=>b.score-a.score).slice(0,4);
+  const scores=bones.map(bone=>{const [a,b]=SKIN_BONES[bone];return {bone,score:1/Math.pow(2+distanceBone(p,r[a],r[b]),5)};}).sort((a,b)=>b.score-a.score).slice(0,4);
   if(part==='N'||part==='F'){
     const ankle=r[part==='N'?'ankleN':'ankleF'];
     if(p.y>ankle.y-16)return {bones:[part==='N'?10:13,0,0,0],weights:[1,0,0,0]};

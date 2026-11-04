@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { attackFor } from '../src/engine.js';
 import { SOURCE_RIGS, SKIN_SCALE, SKIN_PIVOT, SKIN_BONES, worldJoints, originalPoseFor, createSkinMesh, boneMatrices, skinVertex, twoBoneIK } from '../src/rig.js';
 const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 
@@ -38,13 +39,14 @@ test('mesh influences stay normalized and reference valid bones',()=>{
 });
 
 test('attack attachments retain painted proportions and recover to rest',()=>{
-  for(const id of Object.keys(SOURCE_RIGS))for(const [type,duration] of [['punch',.31],['kick',.53],['special',.75],['skill',.78]]){
+  for(const id of Object.keys(SOURCE_RIGS))for(const type of ['punch','kick','special','skill']){
+    const duration=attackFor(id,type).duration;
     for(let t=0;t<duration;t+=1/120){
       const pose=originalPoseFor({id,attack:{type,time:t},y:0},t);
       assert.ok(Math.abs(pose.frames.reduce((s,p)=>s+p.weight,0)-1)<.00001);
       for(const {frame} of pose.frames)assert.ok(boneMatrices(id,frame,pose.joints).flat().every(Number.isFinite));
     }
-    assert.deepEqual(originalPoseFor({id,attack:{type,time:duration}},0).joints,worldJoints(id,0));
+    assert.deepEqual(originalPoseFor({id,y:0,attack:{type,time:duration}},duration).joints,originalPoseFor({id,y:0},duration).joints);
   }
 });
 

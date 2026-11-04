@@ -21,9 +21,9 @@ const css = (await read('src/style.css'))
 // property values above its token-size limit. Normal background-image URLs do
 // not have that custom-property limit. Share the portrait rule to avoid copies.
 const modules = [];
-for (const name of ['motion', 'engine', 'rig', 'skin', 'renderer', 'app']) {
+for (const name of ['motion', 'combat', 'engine', 'rig', 'skin', 'renderer', 'app']) {
   const source = (await read(`src/${name}.js`))
-    .replace(/^import .* from ['"].*['"];\n/gm, '')
+    .replace(/^import\s+[\s\S]*?\s+from\s+['"][^'"]+['"];\r?\n/gm, '')
     .replace(/^export /gm, '')
     .replace('img.src = new URL(`../public/assets/${id}.png`, import.meta.url).href;', 'img.src = ASSET_URLS[id];');
   modules.push(source);

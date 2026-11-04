@@ -57,12 +57,15 @@ test('a correctly timed jump clears the opponent and turns after landing',()=>{
  assert.equal(g.fighters[0].facing,1,'facing stays stable in flight');tick(g,.5);assert.equal(g.fighters[0].facing,-1);
 });
 
-test('jumping above the strike height avoids a ground punch and a middle-height projectile',()=>{
- for(const projectile of [false,true]){
+test('jump damage follows actual body overlap rather than root-height immunity',()=>{
+ for(const projectile of [false,true])for(const clear of [false,true]){
   const g=new Game();g.start({training:true});g.fighters[0].x=650;g.fighters[1].x=805;g.jump(0);tick(g,.42);
   assert.ok(g.fighters[0].y>110);
+  if(clear)g.fighters[0].x=300; // Clear the painted arm's full reach, including the outer leg hurtbox.
   if(projectile)g.projectiles.push({owner:1,x:660,y:420,direction:-1,life:1,age:0,speed:100,radius:62});else g.attack(1,'punch');
-  tick(g,.12);assert.equal(g.fighters[0].hp,100);
+  tick(g,.12);
+  if(clear)assert.equal(g.fighters[0].hp,100,'a body outside the real boxes must remain unharmed');
+  else assert.ok(g.fighters[0].hp<100,'an overlapping airborne leg can still be hit');
  }
 });
 
