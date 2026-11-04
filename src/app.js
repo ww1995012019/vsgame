@@ -1,6 +1,5 @@
 import { Game, CHARACTERS } from './engine.js';
 import { Renderer, Sound } from './renderer.js';
-import { poseFor, solveRig, drawRig } from './rig.js';
 
 const $ = id => document.getElementById(id);
 const storage = {
@@ -344,14 +343,6 @@ document.querySelectorAll('[data-control]').forEach(button => {
   button.addEventListener('contextmenu', event => event.preventDefault());
 });
 
-document.querySelectorAll('.character-art').forEach(art => {
-  const id = art.classList.contains('art-lieying') ? 'lieying' : 'hanfeng';
-  const canvas = document.createElement('canvas'); canvas.width = 340; canvas.height = 560;
-  canvas.style.cssText = 'width:100%;height:100%;object-fit:contain';
-  const ctx = canvas.getContext('2d'); ctx.translate(160, 542);
-  drawRig(ctx, solveRig(poseFor({ id, y: 0 }, 0)), id);
-  art.style.backgroundImage = 'none'; art.append(canvas);
-});
 
 applySettings();
 updateNames();

@@ -1,4 +1,4 @@
-export const WORLD = { width: 1600, height: 760, floor: 688, strikeHeight: 370 };
+export const WORLD = { width: 1600, height: 760, floor: 688, strikeHeight: 420 };
 export const CHARACTERS = {
   lieying: { id: 'lieying', name: '烈影', subtitle: '赤焰疾风', color: '#ffca32', accent: '#ff572c', style: '速度型', speed: 320, power: 1, description: '金焰破空，流火突进。以连续进攻撕开防线。', special: '赤焰掌', skill: '流火冲拳' },
   hanfeng: { id: 'hanfeng', name: '寒锋', subtitle: '霜刃无声', color: '#51deec', accent: '#558bff', style: '力量型', speed: 275, power: 1.12, description: '冰棱远袭，霜环升龙。以寒气与重拳控制战局。', special: '冰棱破', skill: '霜环升龙' },
@@ -45,7 +45,7 @@ export class Game {
   emit(type, data = {}) { this.onEvent({ type, ...data }); }
 
   fighter(id, x, facing) {
-    return { id, x, y: 0, vy: 0, facing, hp: 100, energy: 30, attack: null, stun: 0, blocking: false, walking: false, stride: 0, combo: 0, comboTimer: 0, hitFlash: 0, aiTimer: .9, invincible: 0, knockback: 0 };
+    return { id, x, y: 0, vy: 0, facing, hp: 100, energy: 30, attack: null, stun: 0, blocking: false, walking: false, walkBlend: 0, stride: 0, combo: 0, comboTimer: 0, hitFlash: 0, aiTimer: .9, invincible: 0, knockback: 0 };
   }
 
   resetRound() {
@@ -211,6 +211,7 @@ export class Game {
 
   updateFighter(index, dt) {
     const f = this.fighters[index], other = this.fighters[1 - index];
+    f.walkBlend += Math.max(-dt * 8, Math.min(dt * 8, (f.walking && !f.attack && !f.stun ? 1 : 0) - f.walkBlend));
     f.hitFlash = Math.max(0, f.hitFlash - dt);
     f.stun = Math.max(0, f.stun - dt);
     f.invincible = Math.max(0, f.invincible - dt);
@@ -226,7 +227,7 @@ export class Game {
     if (f.stun <= 0 && !f.attack && !f.blocking) {
       const travel = (f.move || 0) * CHARACTERS[f.id].speed * dt;
       f.x += travel;
-      f.stride += Math.abs(travel) / 250 * Math.PI * 2;
+      f.stride += Math.abs(travel) / 94 * Math.PI * 2;
     }
     f.x += f.knockback * dt;
     f.knockback *= Math.exp(-11 * dt);
@@ -243,7 +244,8 @@ export class Game {
     }
     if (a.type === 'special' && a.time >= move.active && !a.launched) {
       a.launched = true;
-      this.projectiles.push({ owner: index, x: f.x + a.direction * 165, y: f.y + WORLD.strikeHeight, direction: a.direction, life: 1.5, hit: false, age: 0, effect: move.effect, speed: move.speed, radius: move.radius });
+      const muzzle = Math.min(225, Math.max(40, (other.x - f.x) * a.direction - 35));
+      this.projectiles.push({ owner: index, x: f.x + a.direction * muzzle, y: f.y + WORLD.strikeHeight, direction: a.direction, life: 1.5, hit: false, age: 0, effect: move.effect, speed: move.speed, radius: move.radius });
       this.emit('projectile', { index, effect: move.effect });
     } else if (a.type !== 'special' && !a.connected && a.time >= move.active && a.time <= move.end) {
       const ahead = (other.x - f.x) * a.direction;

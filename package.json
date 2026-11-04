@@ -1,6 +1,6 @@
 {
   "name": "street-duel",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "街头对决 — 雨夜街机格斗游戏",
@@ -11,7 +11,7 @@
     "build:site": "node tools/build-site.mjs",
     "test": "node --test --test-isolation=none tests/*.test.mjs",
     "test:preview": "python3 tests/preview_smoke.py",
-    "check": "node --check server.mjs && node --check src/engine.js && node --check src/rig.js && node --check src/renderer.js && node --check src/app.js && node --check tools/build.mjs"
+    "check": "node --check server.mjs && node --check src/engine.js && node --check src/rig.js && node --check src/skin.js && node --check src/renderer.js && node --check src/app.js && node --check tools/build.mjs"
   },
   "engines": { "node": ">=22.7" }
 }

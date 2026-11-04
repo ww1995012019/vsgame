@@ -1,5 +1,6 @@
 import { WORLD, CHARACTERS, attackFor } from './engine.js';
-import { poseFor, solveRig, drawRig } from './rig.js';
+import { originalPoseFor, drawSkinBones } from './rig.js';
+import { OriginalSkin, SKIN_SURFACE } from './skin.js';
 
 export class Renderer {
   constructor(canvas, game) {
@@ -7,6 +8,7 @@ export class Renderer {
     this.ctx = canvas.getContext('2d');
     this.game = game;
     this.images = {};
+    this.skins = {};
     this.rainEnabled = true;
     this.showBones = false;
     this.shakeEnabled = true;
@@ -33,6 +35,7 @@ export class Renderer {
       img.onerror = () => reject(new Error(`无法加载 ${id} 美术资源`));
       img.src = new URL(`../public/assets/${id}.png`, import.meta.url).href;
     })));
+    for (const id of ['lieying', 'hanfeng']) this.skins[id] = new OriginalSkin(this.images[id], id);
   }
 
   render(dt) {
@@ -77,12 +80,15 @@ export class Renderer {
   }
 
   drawFighter(ctx, f, index) {
-    const rig = solveRig(poseFor(f, this.game.elapsed, index, this.game.result));
+    const skin = this.skins[f.id];
+    if (!skin) return;
+    const rig = skin.render(originalPoseFor(f, this.game.elapsed, index, this.game.result, this.reducedMotion));
+    const draw = () => ctx.drawImage(skin.canvas, -SKIN_SURFACE.x, -SKIN_SURFACE.y);
     const shadow = ctx.createRadialGradient(f.x, WORLD.floor + 2, 0, f.x, WORLD.floor + 2, 140);
     shadow.addColorStop(0, '#02090bc4'); shadow.addColorStop(1, '#02090b00');
     ctx.fillStyle = shadow; ctx.beginPath(); ctx.ellipse(f.x, WORLD.floor + 4, 140 - Math.min(f.y * .2, 80), 18, 0, 0, Math.PI * 2); ctx.fill();
     if (f.y <= 1) {
-      ctx.save(); ctx.translate(f.x, WORLD.floor + 4); ctx.scale(f.facing, -.16); ctx.globalAlpha = .10; drawRig(ctx, rig, f.id); ctx.restore();
+      ctx.save(); ctx.translate(f.x, WORLD.floor + 4); ctx.scale(f.facing, -.16); ctx.globalAlpha = .10; draw(); ctx.restore();
     }
     if (f.attack?.type === 'skill' && !this.reducedMotion) this.drawSkillEffect(ctx, f, rig, true);
     ctx.save();
@@ -93,7 +99,8 @@ export class Renderer {
       ctx.translate(0, -18 * progress); ctx.rotate(-progress * 1.28);
     }
     if (f.hitFlash > .07) ctx.globalAlpha = .65;
-    drawRig(ctx, rig, f.id, { bones: this.showBones });
+    draw();
+    if (this.showBones) drawSkinBones(ctx, rig);
     ctx.restore();
     if (f.attack) {
       if (!this.reducedMotion) this.drawAttackTrail(ctx, f);
@@ -107,7 +114,7 @@ export class Renderer {
     ctx.save(); ctx.translate(f.x, WORLD.floor - f.y); ctx.scale(a.direction, 1); ctx.globalCompositeOperation = 'lighter';
     ctx.shadowColor = c.color; ctx.shadowBlur = 0;
     if (!behind && age < 0) {
-      const hand = rig.wristN, size = 12 + windup * 24;
+      const hand = rig.effectHand, size = 12 + windup * 24;
       const glow = ctx.createRadialGradient(hand.x, hand.y, 1, hand.x, hand.y, size * 2);
       glow.addColorStop(0, '#ffffff'); glow.addColorStop(.22, c.color + 'cc'); glow.addColorStop(1, c.color + '00');
       ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(hand.x, hand.y, size * 2, 0, Math.PI * 2); ctx.fill();
@@ -120,14 +127,14 @@ export class Renderer {
     if (move.effect === 'dash' && a.time > .1 && age < .30) {
       if (behind) {
         ctx.globalAlpha = .14;
-        for (let i = 3; i >= 1; i--) { ctx.save(); ctx.translate(-i * 52, i * 2); drawRig(ctx, rig, f.id); ctx.restore(); }
+        for (let i = 3; i >= 1; i--) { ctx.save(); ctx.translate(-i * 52, i * 2); ctx.drawImage(this.skins[f.id].canvas, -SKIN_SURFACE.x, -SKIN_SURFACE.y); ctx.restore(); }
         ctx.globalAlpha = .7; ctx.strokeStyle = '#ffb225';
         for (let i = 0; i < 8; i++) {
           const y = -65 - i * 49, offset = (a.time * 540 + i * 32) % 95;
           ctx.lineWidth = i % 3 + 1; ctx.beginPath(); ctx.moveTo(-190 - offset, y); ctx.lineTo(-60 + offset, y - 13); ctx.stroke();
         }
       } else {
-        const hand = rig.wristN;
+        const hand = rig.effectHand;
         ctx.fillStyle = '#ff8b26aa';
         shapeFlame(ctx, hand.x, hand.y, 70, a.time);
         ctx.fillStyle = '#fff4c1'; shapeFlame(ctx, hand.x + 10, hand.y, 32, a.time);
@@ -156,7 +163,7 @@ export class Renderer {
     if (a.time < move.active * .6 || a.time > move.end + .06) return;
     const progress = (a.time - move.active * .6) / (move.end + .06 - move.active * .6);
     const color = CHARACTERS[f.id].color;
-    ctx.save(); ctx.translate(f.x, WORLD.floor - f.y - (a.type === 'punch' ? 370 : 330)); ctx.scale(a.direction, 1); ctx.globalCompositeOperation = 'lighter';
+    ctx.save(); ctx.translate(f.x, WORLD.floor - f.y - (a.type === 'punch' ? 420 : 330)); ctx.scale(a.direction, 1); ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = Math.sin(progress * Math.PI) * .55;
     ctx.strokeStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 15;
     if (a.type === 'kick') {

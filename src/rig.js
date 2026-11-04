@@ -1,221 +1,158 @@
-// Continuous 2D skeletal animation. Spine/arms use forward kinematics;
-// the legs use a soft two-bone IK solve to keep the soles on their targets.
-// Artwork is drawn on bones, never selected from whole-character sprite frames.
-const radians = Math.PI / 180;
-const lerp = (a, b, t) => a + (b - a) * t;
-const ease = t => t * t * (3 - 2 * t);
-const point = (x, y) => ({ x, y });
-const add = (a, b) => point(a.x + b.x, a.y + b.y);
-const axis = (angle, length, up = false) => point(Math.sin(angle * radians) * length, Math.cos(angle * radians) * length * (up ? -1 : 1));
-const REST_POSE = { rootX: 0, rootY: 0, lean: 3, head: -3, nUp: 8, nBend: 137, fUp: 48, fBend: 106, nX: 74, nY: -18, fX: -86, fY: -18, nPitch: 0, fPitch: 0 };
-
-export const BONE_LENGTHS = { thigh: 136, shin: 130, upperArm: 83, forearm: 79, torso: 128 };
-export const BONE_LINKS = [
-  ['hip', 'chest'], ['chest', 'neck'], ['neck', 'head'],
-  ['shoulderF', 'elbowF'], ['elbowF', 'wristF'], ['shoulderN', 'elbowN'], ['elbowN', 'wristN'],
-  ['hipF', 'kneeF'], ['kneeF', 'ankleF'], ['hipN', 'kneeN'], ['kneeN', 'ankleN'],
+// Original artwork is the skin. These joints refer to the repository's unchanged
+// atlas cells normalized to 448 units; the original PNGs are 1774 x 887.
+// No replacement character drawing is generated here.
+export const SOURCE_CELL = 448;
+export const SKIN_PIVOT = [224, 436];
+export const SKIN_SCALE = { lieying: 604 / 448, hanfeng: 626 / 448 };
+export const JOINT_NAMES = ['hip','neck','head','shoulderN','elbowN','wristN','handN','shoulderF','elbowF','wristF','handF','hipN','kneeN','ankleN','toeN','hipF','kneeF','ankleF','toeF'];
+const sourcePose = (values,frame) => {
+  const nativeCell=1774/4,normalization=SOURCE_CELL/nativeCell;
+  // Measurements were made on a 448-unit review grid over the native atlas.
+  return Object.fromEntries(JOINT_NAMES.map((key,i)=>[key,{x:(values[i*2]+frame%4*(SOURCE_CELL-nativeCell))*normalization,y:(values[i*2+1]+Math.floor(frame/4)*(SOURCE_CELL-nativeCell))*normalization}]));
+};
+export const SOURCE_RIGS = {
+  lieying: [
+    [210,219,211,105,213,64, 173,122,151,159,177,116,189,99, 248,123,279,158,278,119,274,104, 232,228,286,310,321,401,338,423, 182,230,139,317,88,400,79,424],
+    [209,228,217,110,227,76, 166,126,148,164,177,124,192,107, 246,126,309,125,374,115,391,115, 236,240,294,292,319,399,338,424, 184,239,125,322,61,402,53,425],
+    [151,192,111,104,115,65, 80,116,53,147,75,110,86,94, 150,104,192,117,233,132,248,130, 174,183,271,145,377,105,401,97, 137,211,133,312,125,400,130,425],
+    [239,233,235,130,238,100, 176,147,164,177,185,199,200,205, 268,147,326,148,381,139,395,116, 266,246,337,294,344,397,360,424, 217,246,137,330,38,400,32,424],
+    [213,222,215,109,212,76, 175,126,217,145,246,110,260,91, 249,128,279,153,280,111,271,82, 240,239,315,307,349,404,366,426, 182,239,128,327,77,403,67,425],
+    [225,193,148,119,110,85, 126,145,104,178,121,200,141,207, 185,130,220,132,252,118,272,106, 250,221,305,292,322,407,343,427, 207,224,187,316,132,397,138,425],
+    [222,224,207,116,204,82, 176,138,168,185,136,197,123,187, 250,126,279,102,286,48,285,27, 246,239,283,326,317,405,333,427, 198,240,150,329,103,404,100,427],
+    [220,316,230,219,232,182, 188,239,163,272,196,238,211,220, 267,238,286,273,288,231,284,214, 249,326,325,326,299,403,315,426, 190,325,120,335,83,405,82,426],
+  ].map(sourcePose),
+  hanfeng: [
+    [211,221,213,109,222,67, 160,123,144,165,179,129,194,113, 261,127,273,174,289,172,298,161, 235,239,306,322,327,404,349,426, 182,240,125,328,76,405,69,426],
+    [206,224,199,110,208,73, 133,126,124,162,156,130,171,113, 236,125,300,119,371,111,389,110, 233,240,284,324,319,404,339,426, 180,241,115,335,65,406,57,426],
+    [155,199,115,111,119,72, 66,125,47,166,75,133,88,117, 156,118,191,144,227,155,241,154, 183,200,275,152,375,124,397,116, 137,218,127,325,111,404,115,426],
+    [217,245,237,154,254,119, 178,153,138,180,166,210,188,213, 278,161,337,158,393,141,407,120, 251,255,327,292,337,398,360,422, 182,259,107,342,36,407,33,427],
+    [211,220,219,116,230,77, 174,129,214,163,243,118,248,99, 260,128,283,163,285,116,282,91, 240,234,300,326,329,405,348,427, 183,237,120,329,79,405,71,427],
+    [231,216,148,129,115,88, 138,157,120,199,157,197,179,190, 191,146,232,167,276,145,302,126, 255,232,302,314,307,405,331,427, 208,234,151,332,85,406,79,427],
+    [213,228,216,129,224,87, 165,145,120,111,122,56,139,33, 258,157,269,212,308,232,321,222, 241,242,306,329,332,405,353,427, 185,243,118,335,76,407,65,427],
+    [218,319,237,212,251,173, 188,223,163,263,202,241,222,223, 274,225,289,274,306,250,303,229, 248,329,326,324,317,403,338,427, 188,327,113,338,72,406,62,427],
+  ].map(sourcePose),
+};
+export const SKIN_BONES = [
+  ['hip','neck'], ['neck','head'],
+  ['shoulderN','elbowN'], ['elbowN','wristN'], ['wristN','handN'],
+  ['shoulderF','elbowF'], ['elbowF','wristF'], ['wristF','handF'],
+  ['hipN','kneeN'], ['kneeN','ankleN'], ['ankleN','toeN'],
+  ['hipF','kneeF'], ['kneeF','ankleF'], ['ankleF','toeF'],
 ];
-
-// Times match the simulation's anticipation, active and recovery windows.
-export const MOTIONS = {
-  punch: [[0, {}], [.055, { lean: -5, nUp: -15, nBend: 130 }], [.09, { rootX: 15, lean: 14, nUp: 103, nBend: 3, fUp: 12, fBend: 137 }], [.18, { rootX: 15, lean: 14, nUp: 103, nBend: 3 }], [.31, {}]],
-  kick: [[0, {}], [.1, { rootY: 14, lean: -8, nX: 45, nY: -140, nPitch: -15 }], [.18, { rootX: -16, lean: -16, nX: 208, nY: -338, nPitch: -12, nUp: -24, nBend: 123 }], [.31, { rootX: -16, lean: -16, nX: 208, nY: -338, nPitch: -12 }], [.43, { nX: 80, nY: -125 }], [.53, {}]],
-  flame: [[0, {}], [.13, { rootY: 20, lean: -8, nUp: -20, nBend: 115, fUp: -12, fBend: 111 }], [.23, { rootX: 18, lean: 14, nUp: 105, nBend: 0, fUp: 96, fBend: 4 }], [.43, { rootX: 18, lean: 14, nUp: 105, nBend: 0, fUp: 96, fBend: 4 }], [.75, {}]],
-  ice: [[0, {}], [.13, { rootY: 18, lean: -6, nUp: 12, nBend: 155, fUp: 8, fBend: 122 }], [.23, { rootX: 12, lean: 10, nUp: 103, nBend: 3, fUp: 80, fBend: 12 }], [.43, { rootX: 12, lean: 10, nUp: 103, nBend: 3, fUp: 80, fBend: 12 }], [.75, {}]],
-  dash: [[0, {}], [.10, { rootY: 25, lean: 20, nUp: -42, nBend: 110, fUp: 85, fBend: 75 }], [.24, { rootX: 18, lean: 29, nUp: 120, nBend: 0, fUp: -15, fBend: 105, nX: 88, fX: -130, fY: -35 }], [.42, { rootX: 18, lean: 20, nUp: 112, nBend: 3, fX: -130 }], [.78, {}]],
-  uppercut: [[0, {}], [.14, { rootY: 54, lean: 15, nUp: -12, nBend: 102, fUp: 64, fBend: 90 }], [.24, { rootY: -22, lean: -6, nUp: 170, nBend: 8, fUp: 10, fBend: 125, nX: 40, nY: -80 }], [.43, { rootY: -22, lean: -6, nUp: 170, nBend: 8, nX: 40, nY: -80 }], [.61, { rootY: 16 }], [.78, {}]],
-};
-
-export function sampleMotion(keys, time) {
-  let i = 0;
-  while (i < keys.length - 2 && time > keys[i + 1][0]) i++;
-  const [t0, a] = keys[i], [t1, b] = keys[i + 1];
-  const t = ease(Math.max(0, Math.min(1, (time - t0) / (t1 - t0))));
-  return Object.fromEntries(Object.entries(REST_POSE).map(([key, value]) => [key, lerp(a[key] ?? value, b[key] ?? value, t)]));
+const skinMix = (a,b,t) => a+(b-a)*t;
+const smoothSkin = t => {t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);};
+const copyJoints = joints => Object.fromEntries(Object.entries(joints).map(([k,p])=>[k,{...p}]));
+const mixJoints = (a,b,t) => Object.fromEntries(JOINT_NAMES.map(k=>[k,{x:skinMix(a[k].x,b[k].x,t),y:skinMix(a[k].y,b[k].y,t)}]));
+const skinRotate = (p,origin,angle) => ({x:origin.x+(p.x-origin.x)*Math.cos(angle)-(p.y-origin.y)*Math.sin(angle),y:origin.y+(p.x-origin.x)*Math.sin(angle)+(p.y-origin.y)*Math.cos(angle)});
+export function worldJoints(id,frame) {
+  const scale=SKIN_SCALE[id];
+  return Object.fromEntries(Object.entries(SOURCE_RIGS[id][frame]).map(([k,p])=>[k,{x:(p.x-SKIN_PIVOT[0])*scale,y:(p.y-SKIN_PIVOT[1])*scale}]));
 }
-
-export function twoBoneIK(root, target, upper, lower, bend = 1) {
-  const dx = target.x - root.x, dy = target.y - root.y;
-  const distance = Math.hypot(dx, dy), full = upper + lower;
-  const start = full * .965, span = full - start;
-  const reach = distance > start ? start + span * (1 - Math.exp(-(distance - start) / span)) : distance;
-  const d = Math.max(Math.abs(upper - lower) + .001, reach);
-  const ux = distance > .000001 ? dx / distance : 0, uy = distance > .000001 ? dy / distance : 1;
-  const along = (upper * upper - lower * lower + d * d) / (2 * d);
-  const height = Math.sqrt(Math.max(0, upper * upper - along * along));
-  return [point(root.x + ux * along + uy * height * bend, root.y + uy * along - ux * height * bend), point(root.x + ux * d, root.y + uy * d)];
+export function twoBoneIK(root,target,upper,lower,bend=1) {
+  const dx=target.x-root.x,dy=target.y-root.y,raw=Math.hypot(dx,dy);
+  const d=Math.max(Math.abs(upper-lower)+.0001,Math.min(raw,upper+lower-.0001));
+  const ux=raw>.000001?dx/raw:0,uy=raw>.000001?dy/raw:1;
+  const along=(upper*upper-lower*lower+d*d)/(2*d),height=Math.sqrt(Math.max(0,upper*upper-along*along));
+  return [{x:root.x+ux*along+uy*height*bend,y:root.y+uy*along-ux*height*bend},{x:root.x+ux*d,y:root.y+uy*d}];
 }
-
-export function poseFor(f, elapsed = 0, index = 0, result = null) {
-  let pose = { ...REST_POSE };
-  const breath = Math.sin(elapsed * 3.5 + index * 1.7);
-  pose.rootY = breath * 1.5;
-  pose.nUp += breath * 1.6;
-  pose.fBend += breath * 1.5;
-  if (f.walking && !f.attack && !f.stun && f.y <= 1) {
-    // Each foot travels back at the body's speed during stance, then lifts.
-    const direction = (f.move || 1) * f.facing;
-    const foot = phase => {
-      const u = ((phase / (Math.PI * 2)) % 1 + 1) % 1;
-      return u < .6 ? [lerp(75, -75, u / .6) * direction, -18] : [lerp(-75, 75, ease((u - .6) / .4)) * direction, -18 - Math.sin((u - .6) / .4 * Math.PI) * 52];
-    };
-    [pose.nX, pose.nY] = foot(f.stride || 0);
-    [pose.fX, pose.fY] = foot((f.stride || 0) + Math.PI);
-    pose.rootY = 5 + Math.cos((f.stride || 0) * 2) * 3;
-    pose.lean = direction * 7;
-    pose.nUp += Math.sin(f.stride || 0) * 12;
-    pose.fUp -= Math.sin(f.stride || 0) * 12;
-  }
-  if (f.y > 1 && !f.attack) Object.assign(pose, { nX: 90, nY: -105, fX: -70, fY: -72, lean: 9, nUp: 45, nBend: 110, fUp: 90, fBend: 70 });
-  if (f.blocking) Object.assign(pose, { rootY: 17, lean: 10, nUp: 40, nBend: 143, fUp: 65, fBend: 120 });
+function poseFrames(f,index,result) {
+  if (result && result.winner===index) return [{frame:6,weight:1}];
+  if (f.stun>0 && !f.blocking) return [{frame:5,weight:1}];
+  if (f.blocking) return [{frame:4,weight:1}];
   if (f.attack) {
-    const clip = f.attack.type === 'special' ? f.id === 'lieying' ? 'flame' : 'ice' : f.attack.type === 'skill' ? f.id === 'lieying' ? 'dash' : 'uppercut' : f.attack.type;
-    pose = sampleMotion(MOTIONS[clip], f.attack.time);
+    const a=f.attack, data={punch:[1,.09,.20,.31],kick:[2,.18,.32,.53],special:[3,.23,.4,.75],skill:[f.id==='lieying'?1:6,.24,.43,.78]}[a.type];
+    const [frame,active,end,duration]=data;
+    const weight=a.time<active?smoothSkin(a.time/active):a.time>end?1-smoothSkin((a.time-end)/(duration-end)):1;
+    return [{frame:0,weight:1-weight},{frame,weight}].filter(x=>x.weight>.0001);
   }
-  if (f.stun > 0 && !f.blocking) Object.assign(pose, { lean: -19, head: -12, rootX: -10, rootY: 12, nUp: -38, nBend: 85, fUp: 70, fBend: 35 });
-  if (result?.winner === index) Object.assign(pose, { nUp: 165, nBend: 20, fUp: 35, fBend: 120, lean: -3 });
-  return pose;
+  const weight=smoothSkin((f.y||0)/90);
+  return weight>0?[{frame:0,weight:1-weight},{frame:7,weight}].filter(x=>x.weight>.0001):[{frame:0,weight:1}];
 }
-
-export function solveRig(pose) {
-  const p = pose, hip = point(p.rootX, -249 + p.rootY);
-  const chest = add(hip, axis(p.lean, BONE_LENGTHS.torso, true));
-  const neck = add(chest, axis(p.lean, 22, true));
-  const head = add(neck, axis(p.lean + p.head, 44, true));
-  const shoulderN = add(chest, point(-20, 13)), shoulderF = add(chest, point(23, 10));
-  const arm = (shoulder, angle, bend) => {
-    const elbow = add(shoulder, axis(angle - p.lean, BONE_LENGTHS.upperArm));
-    return [elbow, add(elbow, axis(angle - p.lean + bend, BONE_LENGTHS.forearm))];
-  };
-  const [elbowN, wristN] = arm(shoulderN, p.nUp, p.nBend);
-  const [elbowF, wristF] = arm(shoulderF, p.fUp, p.fBend);
-  const hipN = add(hip, point(-14, 0)), hipF = add(hip, point(14, 0));
-  const [kneeN, ankleN] = twoBoneIK(hipN, point(p.nX, p.nY), BONE_LENGTHS.thigh, BONE_LENGTHS.shin);
-  const [kneeF, ankleF] = twoBoneIK(hipF, point(p.fX, p.fY), BONE_LENGTHS.thigh, BONE_LENGTHS.shin);
-  return { hip, chest, neck, head, shoulderN, shoulderF, elbowN, elbowF, wristN, wristF, hipN, hipF, kneeN, kneeF, ankleN, ankleF, pose: p };
-}
-
-export const PALETTES = {
-  lieying: { skin: '#e9a783', skinLight: '#ffd3a3', skinDark: '#a95946', cloth: '#eeb72d', clothLight: '#ffe07b', clothDark: '#a76b20', pants: '#262b37', pantsLight: '#444753', pantsDark: '#171d29', trim: '#ffd05b', wrap: '#ad3444', wrapLight: '#e26465', hair: '#222531', hairLight: '#505264', boot: '#242731' },
-  hanfeng: { skin: '#c98f73', skinLight: '#f4c09c', skinDark: '#8b5248', cloth: '#243c58', clothLight: '#526c85', clothDark: '#142439', pants: '#dce7ed', pantsLight: '#ffffff', pantsDark: '#8b9fae', trim: '#69e1ed', wrap: '#204c73', wrapLight: '#699ac0', hair: '#dce8f1', hairLight: '#ffffff', boot: '#192d41' },
-};
-
-const INK = '#101722';
-function shape(ctx, points, fill, stroke = INK, width = 2.5) {
-  ctx.beginPath(); points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
-  ctx.fillStyle = fill; ctx.fill();
-  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.stroke(); }
-}
-function line(ctx, points, color, width = 2) {
-  ctx.beginPath(); points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.stroke();
-}
-function gradient(ctx, x0, y0, x1, y1, dark, light) {
-  const fill = ctx.createLinearGradient(x0, y0, x1, y1); fill.addColorStop(0, dark); fill.addColorStop(.42, light); fill.addColorStop(1, dark); return fill;
-}
-function segment(ctx, a, b, widthA, widthB, base, light, dark, stripe = null) {
-  const length = Math.hypot(b.x - a.x, b.y - a.y);
-  ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(Math.atan2(b.y - a.y, b.x - a.x) - Math.PI / 2);
-  ctx.fillStyle = gradient(ctx, -widthA, 0, widthA, 0, dark, light);
-  ctx.beginPath(); ctx.moveTo(-widthA * .63, -8); ctx.quadraticCurveTo(-widthA * 1.1, length * .3, -widthB, length - 8);
-  ctx.quadraticCurveTo(0, length + 11, widthB, length - 8); ctx.quadraticCurveTo(widthA * .9, length * .4, widthA * .63, -8); ctx.quadraticCurveTo(0, -18, -widthA * .63, -8); ctx.closePath();
-  ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 2.4; ctx.stroke();
-  line(ctx, [[-widthA * .32, 6], [-widthB * .48, length - 12]], base, 3);
-  if (stripe) line(ctx, [[widthA * .5, 3], [widthB * .58, length - 10]], stripe, 4);
-  ctx.restore();
-}
-
-function drawFoot(ctx, a, pitch, p) {
-  ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(pitch * radians);
-  shape(ctx, [[-22, -29], [16, -25], [20, -8], [42, 0], [45, 15], [-26, 15], [-26, -7]], p.boot);
-  shape(ctx, [[-25, 9], [44, 9], [45, 16], [-26, 16]], p.pantsLight);
-  line(ctx, [[-18, -21], [10, -18], [21, 0], [38, 4]], p.trim, 3);
-  for (let i = 0; i < 3; i++) line(ctx, [[-10, -18 + i * 6], [12, -15 + i * 6]], '#b2b4ad', 2);
-  ctx.restore();
-}
-function drawLeg(ctx, hip, knee, ankle, pitch, p, ice) {
-  segment(ctx, hip, knee, 38, 30, p.pants, p.pantsLight, p.pantsDark, ice ? '#b94150' : p.trim);
-  segment(ctx, knee, ankle, 32, 20, p.pants, p.pantsLight, p.pantsDark, ice ? '#a53549' : p.trim);
-  const x = hip.x + (knee.x - hip.x) * .4, y = hip.y + (knee.y - hip.y) * .4;
-  line(ctx, [[x - 7, y - 15], [x + 9, y - 4], [x - 5, y + 12], [x + 8, y + 28], [x - 4, y + 46]], ice ? '#a33249' : '#c18b34', 5);
-  line(ctx, [[knee.x - 15, knee.y - 8], [knee.x + 9, knee.y + 5]], p.pantsDark, 2);
-  drawFoot(ctx, ankle, pitch, p);
-}
-function drawArm(ctx, shoulder, elbow, wrist, p, jacket) {
-  segment(ctx, shoulder, elbow, jacket ? 27 : 25, jacket ? 23 : 18, jacket ? p.cloth : p.skin, jacket ? p.clothLight : p.skinLight, jacket ? p.clothDark : p.skinDark, jacket ? '#343a45' : null);
-  segment(ctx, elbow, wrist, 18, 14, p.skin, p.skinLight, p.skinDark);
-  const wrapStart = point(lerp(elbow.x, wrist.x, .55), lerp(elbow.y, wrist.y, .55));
-  segment(ctx, wrapStart, wrist, 17, 16, p.wrap, p.wrapLight, p.wrap);
-  const angle = Math.atan2(wrist.y - elbow.y, wrist.x - elbow.x);
-  ctx.save(); ctx.translate(wrist.x, wrist.y); ctx.rotate(angle);
-  shape(ctx, [[-9, -14], [17, -15], [24, -4], [22, 11], [2, 17], [-10, 9]], p.wrap);
-  line(ctx, [[9, -10], [9, 3], [20, 3]], p.wrapLight, 2);
-  line(ctx, [[-3, -6], [0, 10]], p.wrapLight, 2);
-  ctx.restore();
-  // Skin and sleeve creases emphasize the elbow rather than hiding the joint.
-  line(ctx, [[elbow.x - 8, elbow.y - 5], [elbow.x + 7, elbow.y]], jacket ? p.clothDark : p.skinDark, 2);
-}
-function drawTorso(ctx, r, p, ice) {
-  ctx.save(); ctx.translate(r.hip.x, r.hip.y); ctx.rotate(r.pose.lean * radians);
-  shape(ctx, [[-37, -7], [-43, -111], [-24, -143], [28, -142], [49, -115], [34, -6]], gradient(ctx, -40, 0, 45, 0, p.skinDark, p.skinLight));
-  // Short yellow jacket / sleeveless navy gi preserve the original identities.
-  shape(ctx, [[-36, -136], [-55, -114], [-42, -30], [-15, -28], [-23, -107], [-10, -138]], gradient(ctx, -49, 0, -10, 0, p.clothDark, p.clothLight));
-  shape(ctx, [[21, -140], [46, -124], [49, -39], [22, -31], [10, -96]], gradient(ctx, 11, 0, 49, 0, p.clothDark, p.clothLight));
-  line(ctx, [[-10, -138], [-21, -107], [-12, -32]], ice ? '#bec8d1' : p.trim, 3);
-  line(ctx, [[21, -137], [12, -96], [26, -34]], ice ? '#bec8d1' : p.trim, 3);
-  if (!ice) {
-    shape(ctx, [[-21, -105], [17, -105], [23, -78], [-17, -75]], '#222735');
-    line(ctx, [[-14, -94], [12, -94]], '#59606b', 2);
-  } else {
-    line(ctx, [[0, -118], [0, -44]], p.skinDark, 2);
-    for (let i = 0; i < 3; i++) line(ctx, [[-11, -105 + i * 22], [1, -102 + i * 22], [14, -109 + i * 22]], p.skinDark, 2);
-    line(ctx, [[34, -108], [25, -96], [36, -89], [27, -74], [36, -62]], '#bedbe2', 3);
-  }
-  line(ctx, [[0, -64], [-3, -49], [6, -47]], p.skinDark, 2);
-  shape(ctx, [[-38, -23], [36, -22], [35, 5], [-36, 4]], p.pants);
-  shape(ctx, [[-39, -16], [37, -18], [37, -6], [-38, -3]], ice ? '#a9364d' : '#373641');
-  shape(ctx, [[9, -16], [25, -11], [14, 6], [2, -4]], ice ? '#db5964' : p.trim);
-  const sway = Math.sin(r.pose.nUp * .05) * 8;
-  shape(ctx, [[13, -6], [27, -3], [37 + sway, 76], [18 + sway, 65]], ice ? '#ae3b52' : '#d59c2d');
-  shape(ctx, [[3, -4], [13, -3], [-7 - sway, 52], [-19 - sway, 57]], ice ? '#c34a5b' : '#e2b541');
-  ctx.restore();
-}
-function drawHead(ctx, r, p, ice) {
-  ctx.save(); ctx.translate(r.neck.x, r.neck.y); ctx.rotate((r.pose.lean + r.pose.head) * radians);
-  shape(ctx, [[-13, 5], [-13, -27], [15, -30], [22, -3], [10, 12]], p.skin);
-  shape(ctx, [[-26, -62], [-16, -87], [15, -91], [35, -72], [34, -53], [44, -41], [33, -36], [29, -16], [10, -8], [-17, -27]], gradient(ctx, -20, 0, 35, 0, p.skinDark, p.skinLight));
-  // Angular hair tufts, with a short tied lock on the yellow fighter.
-  if (!ice) shape(ctx, [[-24, -57], [-51, -51], [-37, -70], [-46, -88], [-20, -93], [-8, -110], [7, -103], [28, -103], [41, -86], [37, -61], [22, -71], [1, -53], [10, -77], [-14, -55]], p.hair);
-  else shape(ctx, [[-24, -51], [-41, -64], [-31, -72], [-40, -88], [-20, -85], [-19, -104], [-4, -96], [9, -112], [15, -97], [31, -105], [43, -88], [36, -70], [18, -75], [5, -58], [9, -81], [-10, -61]], p.hair);
-  line(ctx, [[-25, -83], [-6, -90], [19, -89]], p.hairLight, 4);
-  line(ctx, [[-22, -73], [-3, -82], [20, -82]], p.hairLight, 2);
-  shape(ctx, [[-24, -52], [-13, -55], [-8, -40], [-15, -32], [-23, -39]], p.skin);
-  line(ctx, [[19, -57], [32, -56]], INK, 3.5);
-  shape(ctx, [[20, -52], [33, -52], [29, -46], [22, -47]], '#f7f3de', null);
-  line(ctx, [[29, -51], [29, -47]], ice ? '#278dbd' : '#5d452c', 3);
-  line(ctx, [[34, -37], [29, -35]], p.skinDark, 2);
-  line(ctx, [[22, -24], [32, -26]], INK, 1.6);
-  line(ctx, [[2, -34], [11, -22]], p.skinDark, 1.5);
-  ctx.restore();
-}
-
-export function drawRig(ctx, rig, id, { bones = false, opacity = 1 } = {}) {
-  const p = PALETTES[id], ice = id === 'hanfeng';
-  ctx.save(); ctx.globalAlpha *= opacity;
-  ctx.save(); ctx.globalAlpha *= .86;
-  drawArm(ctx, rig.shoulderF, rig.elbowF, rig.wristF, p, !ice);
-  drawLeg(ctx, rig.hipF, rig.kneeF, rig.ankleF, rig.pose.fPitch, p, ice);
-  ctx.restore();
-  drawLeg(ctx, rig.hipN, rig.kneeN, rig.ankleN, rig.pose.nPitch, p, ice);
-  drawTorso(ctx, rig, p, ice);
-  drawHead(ctx, rig, p, ice);
-  drawArm(ctx, rig.shoulderN, rig.elbowN, rig.wristN, p, !ice);
-  if (bones) {
-    ctx.save(); ctx.shadowBlur = 0; ctx.shadowColor = '#05090b';
-    for (const [a, b] of BONE_LINKS) line(ctx, [[rig[a].x, rig[a].y], [rig[b].x, rig[b].y]], '#8fffe7', 2.3);
-    for (const name of new Set(BONE_LINKS.flat())) {
-      ctx.beginPath(); ctx.arc(rig[name].x, rig[name].y, 4.5, 0, Math.PI * 2); ctx.fillStyle = '#fff9c9'; ctx.fill(); ctx.strokeStyle = '#0d292d'; ctx.lineWidth = 1.5; ctx.stroke();
+export function originalPoseFor(f,elapsed=0,index=0,result=null,reducedMotion=false) {
+  const frames=poseFrames(f,index,result);
+  let joints=worldJoints(f.id,frames[0].frame);
+  if(frames.length>1)joints=mixJoints(joints,worldJoints(f.id,frames[1].frame),frames[1].weight);
+  joints=copyJoints(joints);
+  if(!reducedMotion && !f.attack && !f.stun && !f.blocking && !result && !(f.y>1)) {
+    const base=copyJoints(joints),breath=Math.sin(elapsed*3.6+index*1.7),walk=f.walkBlend??(f.walking?1:0);
+    const bob=(breath+1)*.7+walk*(24+Math.cos((f.stride||0)*2)*2);
+    for(const p of Object.values(joints))p.y+=bob;
+    // Upper body and arms inherit the torso, then receive small independent
+    // rotations. The face, hair, gloves and boots keep their painted details.
+    const lean=breath*.006+walk*(f.move||0)*(f.facing||1)*.022;
+    for(const name of ['neck','head','shoulderN','elbowN','wristN','handN','shoulderF','elbowF','wristF','handF'])joints[name]=skinRotate(joints[name],joints.hip,lean);
+    joints.head=skinRotate(joints.head,joints.neck,-lean*.6);
+    for(const side of ['N','F']){
+      const phase=(f.stride||0)+(side==='N'?0:Math.PI),sway=breath*.012+Math.sin(phase)*walk*.05;
+      for(const name of ['elbow','wrist','hand'])joints[name+side]=skinRotate(joints[name+side],joints['shoulder'+side],sway);
+      const ankleBase=base['ankle'+side];
+      const u=((phase/(Math.PI*2))%1+1)%1,direction=(f.move||1)*(f.facing||1);
+      const step=u<.6?{x:skinMix(28,-28,u/.6)*direction,y:0}:{x:skinMix(-28,28,smoothSkin((u-.6)/.4))*direction,y:-Math.sin((u-.6)/.4*Math.PI)*16};
+      const target={x:ankleBase.x+step.x*walk,y:ankleBase.y+step.y*walk};
+      const hip=joints['hip'+side],knee0=base['knee'+side],ankle0=base['ankle'+side],hip0=base['hip'+side];
+      const upper=Math.hypot(knee0.x-hip0.x,knee0.y-hip0.y),lower=Math.hypot(ankle0.x-knee0.x,ankle0.y-knee0.y);
+      const cross=(ankle0.y-hip0.y)*(knee0.x-hip0.x)-(ankle0.x-hip0.x)*(knee0.y-hip0.y);
+      const [knee,ankle]=twoBoneIK(hip,target,upper,lower,Math.sign(cross)||1);
+      joints['knee'+side]=knee;joints['ankle'+side]=ankle;
+      const toe=base['toe'+side];joints['toe'+side]={x:toe.x+ankle.x-ankle0.x,y:toe.y+ankle.y-ankle0.y};
     }
-    ctx.restore();
   }
+  const effectSide=f.attack?.type==='skill' && f.id==='hanfeng'?(joints.wristN.y<joints.wristF.y?'N':'F'):'F';
+  const attachment=frames.reduce((a,b)=>a.weight>=b.weight?a:b).frame;
+  return {frames,attachment,joints,effectHand:joints['hand'+effectSide]};
+}
+// Affine bone transforms map original atlas coordinates to the evaluated pose.
+// Separate matrices keep face/hair, hands and shoes rigid at their attachment.
+export function boneMatrices(id,frame,target) {
+  const source=SOURCE_RIGS[id][frame],scale=SKIN_SCALE[id];
+  return SKIN_BONES.map(([from,to],i)=>{
+    const a=source[from],b=source[to],c=target[from],d=target[to];
+    const sx=b.x-a.x,sy=b.y-a.y,sl=Math.hypot(sx,sy),tx=d.x-c.x,ty=d.y-c.y,tl=Math.hypot(tx,ty);
+    const ux=sx/sl,uy=sy/sl,vx=tx/(tl||1),vy=ty/(tl||1),along=[1,4,7,10,13].includes(i)?scale:tl/sl;
+    const m0=vx*along*ux+vy*scale*uy,m1=vy*along*ux-vx*scale*uy;
+    const m2=vx*along*uy-vy*scale*ux,m3=vy*along*uy+vx*scale*ux;
+    return [m0,m1,m2,m3,c.x-m0*a.x-m2*a.y,c.y-m1*a.x-m3*a.y];
+  });
+}
+const distanceBone=(p,a,b)=>{
+  const dx=b.x-a.x,dy=b.y-a.y,t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy)));
+  return Math.hypot(p.x-a.x-dx*t,p.y-a.y-dy*t);
+};
+export function vertexWeights(id,frame,p) {
+  const r=SOURCE_RIGS[id][frame];
+  // Protect the detailed face and hair from nearby raised fists. This region
+  // follows the source head axis, rather than coloring or repainting any pixels.
+  const hx=r.head.x,hy=r.head.y;
+  const headRadiusX=id==='lieying'?52:45,headRadiusY=53;
+  if(((p.x-hx)/headRadiusX)**2+((p.y-hy)/headRadiusY)**2<1 && p.y<r.neck.y-5)return {bones:[1,0,0,0],weights:[1,0,0,0]};
+  const scores=SKIN_BONES.map(([a,b],bone)=>{
+    let d=distanceBone(p,r[a],r[b]);
+    if(bone===0)d=Math.max(0,d-20); // broad torso; avoid dragging its cloth with a nearby elbow
+    if(bone===8||bone===11)d=Math.max(0,d-11); // loose original trousers
+    if([4,7,10,13].includes(bone))d=Math.max(0,d-5);
+    return {bone,score:1/Math.pow(3+d,4)};
+  }).sort((a,b)=>b.score-a.score).slice(0,4);
+  const sum=scores.reduce((s,x)=>s+x.score,0);
+  return {bones:scores.map(x=>x.bone),weights:scores.map(x=>x.score/sum)};
+}
+export function createSkinMesh(id,frame,cells=56) {
+  const vertices=[],indices=[];
+  for(let y=0;y<=cells;y++)for(let x=0;x<=cells;x++){
+    const px=x/cells*SOURCE_CELL,py=y/cells*SOURCE_CELL,w=vertexWeights(id,frame,{x:px,y:py});
+    vertices.push(px,py,(frame%4+px/SOURCE_CELL)/4,(Math.floor(frame/4)+py/SOURCE_CELL)/2,...w.bones,...w.weights);
+  }
+  for(let y=0;y<cells;y++)for(let x=0;x<cells;x++){const a=y*(cells+1)+x,b=a+1,c=a+cells+1,d=c+1;indices.push(a,b,c,b,d,c);}
+  return {vertices:new Float32Array(vertices),indices:new Uint16Array(indices),cells};
+}
+export function skinVertex(x,y,bones,weights,matrices) {
+  const p={x:0,y:0};
+  bones.forEach((bone,i)=>{const m=matrices[bone],w=weights[i];p.x+=(m[0]*x+m[2]*y+m[4])*w;p.y+=(m[1]*x+m[3]*y+m[5])*w;});
+  return p;
+}
+export function drawSkinBones(ctx,pose) {
+  const r=pose.joints;
+  ctx.save();ctx.lineWidth=2;ctx.strokeStyle='#8fffe7';
+  for(const [a,b] of SKIN_BONES){ctx.beginPath();ctx.moveTo(r[a].x,r[a].y);ctx.lineTo(r[b].x,r[b].y);ctx.stroke();}
+  for(const p of Object.values(r)){ctx.beginPath();ctx.arc(p.x,p.y,3.5,0,Math.PI*2);ctx.fillStyle='#fff7be';ctx.fill();ctx.strokeStyle='#14343a';ctx.lineWidth=1;ctx.stroke();}
   ctx.restore();
 }
