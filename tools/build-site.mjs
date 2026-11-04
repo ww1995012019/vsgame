@@ -2,7 +2,7 @@ import { cp, copyFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const root = new URL('../', import.meta.url);
-const output = new URL('dist/site/', root);
+const output = new URL('dist/client/', root);
 await mkdir(output, { recursive: true });
 await copyFile(new URL('index.html', root), new URL('index.html', output));
 for (const directory of ['src', 'public']) {
