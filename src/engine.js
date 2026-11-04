@@ -1,4 +1,4 @@
-export const WORLD = { width: 1600, height: 760, floor: 688, strikeHeight: 420 };
+export const WORLD = { width: 1600, height: 760, floor: 688, strikeHeight: 370 };
 export const CHARACTERS = {
   lieying: { id: 'lieying', name: '烈影', subtitle: '赤焰疾风', color: '#ffca32', accent: '#ff572c', style: '速度型', speed: 320, power: 1, description: '金焰破空，流火突进。以连续进攻撕开防线。', special: '赤焰掌', skill: '流火冲拳' },
   hanfeng: { id: 'hanfeng', name: '寒锋', subtitle: '霜刃无声', color: '#51deec', accent: '#558bff', style: '力量型', speed: 275, power: 1.12, description: '冰棱远袭，霜环升龙。以寒气与重拳控制战局。', special: '冰棱破', skill: '霜环升龙' },

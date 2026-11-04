@@ -36,3 +36,13 @@ test('unreachable and coincident IK targets stay finite without changing bone le
     assert.ok(Math.abs(distance(joint, end) - 130) < .00001);
   }
 });
+
+// An active straight punch should align with its world-space hit height even
+// while the torso leans; body rotation must not turn it into an uppercut.
+test('straight punches stay horizontal during torso lean', () => {
+  for (const [clip, time] of [['punch', .09], ['dash', .24]]) {
+    const rig = solveRig(sampleMotion(MOTIONS[clip], time));
+    assert.ok(Math.abs(rig.elbowN.y - rig.wristN.y) < 12);
+    assert.ok(rig.wristN.x > rig.shoulderN.x + 150);
+  }
+});

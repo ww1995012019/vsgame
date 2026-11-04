@@ -84,8 +84,8 @@ export function solveRig(pose) {
   const head = add(neck, axis(p.lean + p.head, 44, true));
   const shoulderN = add(chest, point(-20, 13)), shoulderF = add(chest, point(23, 10));
   const arm = (shoulder, angle, bend) => {
-    const elbow = add(shoulder, axis(angle + p.lean, BONE_LENGTHS.upperArm));
-    return [elbow, add(elbow, axis(angle + p.lean + bend, BONE_LENGTHS.forearm))];
+    const elbow = add(shoulder, axis(angle - p.lean, BONE_LENGTHS.upperArm));
+    return [elbow, add(elbow, axis(angle - p.lean + bend, BONE_LENGTHS.forearm))];
   };
   const [elbowN, wristN] = arm(shoulderN, p.nUp, p.nBend);
   const [elbowF, wristF] = arm(shoulderF, p.fUp, p.fBend);

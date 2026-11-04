@@ -156,14 +156,14 @@ export class Renderer {
     if (a.time < move.active * .6 || a.time > move.end + .06) return;
     const progress = (a.time - move.active * .6) / (move.end + .06 - move.active * .6);
     const color = CHARACTERS[f.id].color;
-    ctx.save(); ctx.translate(f.x, WORLD.floor - f.y - 330); ctx.scale(a.direction, 1); ctx.globalCompositeOperation = 'lighter';
+    ctx.save(); ctx.translate(f.x, WORLD.floor - f.y - (a.type === 'punch' ? 370 : 330)); ctx.scale(a.direction, 1); ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = Math.sin(progress * Math.PI) * .55;
     ctx.strokeStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 15;
     if (a.type === 'kick') {
       ctx.lineWidth = 7; ctx.beginPath(); ctx.ellipse(36, 10, 238, 157, -.3, -1.4 + progress * .6, .15 + progress * .6); ctx.stroke();
       ctx.globalAlpha *= .6; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(35, 10, 250, 166, -.3, -1.5 + progress * .6, .25 + progress * .6); ctx.stroke();
     } else if (a.type === 'punch') {
-      ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(60, -100); ctx.lineTo(190 + progress * 30, -105); ctx.stroke();
+      ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(60, 0); ctx.lineTo(190 + progress * 30, -5); ctx.stroke();
     }
     ctx.restore();
   }
