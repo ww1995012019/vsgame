@@ -41,8 +41,8 @@ with sync_playwright() as p:
     page.keyboard.up('KeyD')
     assert page.evaluate('testGame.fighters[0].x') > start_x + 50
     page.keyboard.press('KeyW')
-    page.wait_for_timeout(130)
-    assert page.evaluate('testGame.fighters[0].y') > 20
+    page.wait_for_function('testGame.fighters[0].y > 20')
+    assert page.evaluate('testGame.fighters[0].jumpPhase') == 'air'
     print('PASS: enter battle, keyboard movement, jump', flush=True)
 
     page.click('[data-nav="training"]')
@@ -141,8 +141,8 @@ with sync_playwright() as p:
     phone.mouse.up()
     assert phone.evaluate('testGame.fighters[0].x') > start_x + 60
     phone.locator('[data-control="jump"]').tap()
-    phone.wait_for_timeout(120)
-    assert phone.evaluate('testGame.fighters[0].y') > 20
+    phone.wait_for_function('testGame.fighters[0].y > 20')
+    assert phone.evaluate('testGame.fighters[0].jumpPhase') == 'air'
     phone.screenshot(path=str(OUTPUT / 'mobile-training.png'), full_page=True)
     assert not errors, errors
     print('PASS: 390px layout, on-screen movement, on-screen jump', flush=True)

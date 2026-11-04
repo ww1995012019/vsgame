@@ -14,7 +14,7 @@ test('starts a real match with an intro, a running clock, and best-of-three scor
   tick(game, 2.5);
   assert.equal(game.state, 'playing');
   tick(game, 1);
-  assert.ok(game.timer < 90 && game.timer > 88);
+  assert.ok(game.timer < 99 && game.timer > 97);
   assert.deepEqual(game.wins, [0, 0]);
 });
 
@@ -30,12 +30,17 @@ test('walking is frame-rate independent and constrained to the arena', () => {
 
 test('jump uses gravity, lands, and cannot be retriggered in midair', () => {
   const game = training();
-  game.jump(0); tick(game, .15);
+  game.jump(0); tick(game, .05);
+  assert.equal(game.fighters[0].jumpPhase, 'prepare');
+  assert.equal(game.fighters[0].y, 0, 'anticipation keeps both feet grounded');
+  assert.equal(game.jump(0), false);
+  tick(game, .14);
   assert.ok(game.fighters[0].y > 70);
   assert.equal(game.jump(0), false);
   tick(game, 1);
   assert.equal(game.fighters[0].y, 0);
   assert.equal(game.fighters[0].vy, 0);
+  assert.equal(game.fighters[0].jumpPhase, 'ground');
 });
 
 test('punch only connects inside its active window, once per attack', () => {
@@ -47,11 +52,12 @@ test('punch only connects inside its active window, once per attack', () => {
   assert.equal(game.matchStats.hits, 1);
 });
 
-test('out-of-range punches miss and cannot damage an airborne target', () => {
+test('out-of-range punches and attacks with no airborne body overlap miss', () => {
   const game = training();
   game.attack(0, 'punch'); tick(game, .5);
   assert.equal(game.fighters[1].hp, 100);
-  closeRange(game); game.fighters[1].y = 300; game.fighters[1].vy = 0;
+  // Clear the entire body, rather than assuming any positive root height is immunity.
+  closeRange(game); game.fighters[1].y = 650; game.fighters[1].vy = 0;
   game.attack(0, 'punch'); tick(game, .12);
   assert.equal(game.fighters[1].hp, 100);
 });
@@ -79,14 +85,16 @@ test('special requires energy and releases a traveling projectile', () => {
   assert.equal(game.matchStats.hits, 1);
 });
 
-test('rapid hits count as a combo and expire after a gap', () => {
+test('separate hits after the victim recovers are separate combos', () => {
   const game = training(); closeRange(game);
   game.attack(0, 'punch'); tick(game, .4);
   closeRange(game); game.attack(0, 'punch'); tick(game, .4);
-  assert.equal(game.matchStats.maxCombo, 2);
+  assert.equal(game.matchStats.maxCombo, 1);
   tick(game, 1.5);
   closeRange(game); game.attack(0, 'punch'); tick(game, .4);
-  assert.equal(game.fighters[0].combo, 1);
+  assert.equal(game.fighters[0].combo, 1, 'this is the first hit of a new sequence');
+  tick(game, .1);
+  assert.equal(game.fighters[0].combo, 0, 'the counter clears when the victim recovers');
   assert.equal(game.matchStats.hits, 3);
 });
 
@@ -170,7 +178,7 @@ test('a short press and release between simulation ticks still performs the acti
   assert.ok(game.fighters[0].y > 50);
 });
 
-test('the end of an attack accepts a buffered next move for responsive combos', () => {
+test('the end of an attack accepts a buffered next move without inventing a combo', () => {
   const game = training(); closeRange(game);
   game.setInput('punch', true); game.setInput('punch', false);
   tick(game, .3);
@@ -178,5 +186,5 @@ test('the end of an attack accepts a buffered next move for responsive combos', 
   game.setInput('kick', true); game.setInput('kick', false);
   tick(game, .4);
   assert.equal(game.matchStats.hits, 2);
-  assert.equal(game.matchStats.maxCombo, 2);
+  assert.equal(game.matchStats.maxCombo, 1, 'a full recovery allows the opponent to act between hits');
 });

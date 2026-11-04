@@ -7,12 +7,12 @@ const storage = {
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Private mode can deny storage; play remains available. */ } },
 };
 const sound = new Sound();
-const settings = { difficulty: 'normal', volume: 45, shake: true, rain: true, muted: false };
+const settings = { difficulty: 'normal', volume: 45, shake: true, rain: true, muted: false, bones: false, combatDebug: false };
 const savedSettings = storage.get('street-duel-settings', {});
 if (savedSettings && typeof savedSettings === 'object') {
   if (['easy', 'normal', 'hard'].includes(savedSettings.difficulty)) settings.difficulty = savedSettings.difficulty;
   if (Number.isFinite(savedSettings.volume)) settings.volume = Math.min(100, Math.max(0, savedSettings.volume));
-  for (const key of ['shake', 'rain', 'muted']) if (typeof savedSettings[key] === 'boolean') settings[key] = savedSettings[key];
+  for (const key of ['shake', 'rain', 'muted', 'bones', 'combatDebug']) if (typeof savedSettings[key] === 'boolean') settings[key] = savedSettings[key];
 }
 const storedHistory = storage.get('street-duel-history', []);
 let history = Array.isArray(storedHistory) ? storedHistory.filter(row => row && Object.hasOwn(CHARACTERS, row.playerId) && [0, 1, -1].includes(row.winner) && Array.isArray(row.wins) && row.wins.length === 2 && row.wins.every(v => Number.isInteger(v) && v >= 0 && v <= 2) && Number.isFinite(row.combo) && Number.isFinite(row.date)).slice(0, 30) : [];
@@ -22,6 +22,7 @@ let selectedCharacter = 'lieying';
 let resultShown = false;
 let fpsCount = 0, fpsTime = 0, hudTime = 0;
 let calloutText = '';
+let skillCallout = null;
 
 export const game = new Game({ onEvent: onGameEvent });
 const renderer = new Renderer($('game-canvas'), game);
@@ -35,7 +36,11 @@ function toast(message) {
 
 function onGameEvent(event) {
   sound.play(event);
-  if (event.type === 'lowEnergy') toast('气不足：命中或格挡积攒能量，50 气可释放必杀');
+  if (event.type === 'lowEnergy') toast(`气不足：此技能需要 ${event.cost} 气，命中或格挡可积攒能量`);
+  if (event.type === 'attack' && ['special', 'skill'].includes(event.move)) {
+    const character = CHARACTERS[event.character];
+    skillCallout = { text: character[event.move], color: character.color, until: game.elapsed + .9, index: event.index };
+  }
   if (event.type === 'roundEnd' && event.finished) {
     history.unshift({ playerId: event.playerId, winner: event.winner, wins: event.wins, combo: event.stats.maxCombo, date: Date.now() });
     history = history.slice(0, 30);
@@ -49,6 +54,15 @@ function applySettings() {
   sound.muted = settings.muted;
   renderer.shakeEnabled = settings.shake;
   renderer.rainEnabled = settings.rain;
+  renderer.showBones = settings.bones;
+  renderer.showCombatDebug = settings.combatDebug;
+  $('combat-debug-input').checked = settings.combatDebug;
+  $('combat-debug-button').setAttribute('aria-pressed', String(settings.combatDebug));
+  $('combat-debug-button').innerHTML = `${settings.combatDebug ? '关闭' : '显示'}判定框 <kbd>F3</kbd>`;
+  $('combat-debug-readout').hidden = !settings.combatDebug;
+  $('bones-input').checked = settings.bones;
+  $('bones-button').setAttribute('aria-pressed', String(settings.bones));
+  $('bones-button').innerHTML = `${settings.bones ? '隐藏' : '显示'}骨骼 <kbd>B</kbd>`;
   $('difficulty-select').value = settings.difficulty;
   $('volume-input').value = settings.volume;
   $('volume-output').value = `${settings.volume}%`;
@@ -68,6 +82,10 @@ function updateNames() {
     $(`${prefix}-subtitle`).textContent = character.subtitle;
     $(`${prefix}-portrait`).className = `portrait portrait-${character.id}`;
   }
+  const character = CHARACTERS[game.fighters[0].id];
+  $('special-name').textContent = character.special;
+  $('skill-name').textContent = character.skill;
+  $('skill-bar').style.setProperty('--fighter-accent', character.color);
   $('opponent-tag').textContent = game.training ? '木桩' : 'CPU';
   $('training-readout').hidden = !game.training;
   $('footer-mode').textContent = game.training ? '训练模式' : '街机模式';
@@ -80,6 +98,7 @@ function startMatch(training = false) {
   sound.unlock();
   game.start({ training, playerId: selectedCharacter });
   resultShown = false;
+  skillCallout = null;
   $('start-prompt').hidden = true;
   $('pause-label').textContent = '暂停';
   updateNames();
@@ -87,6 +106,7 @@ function startMatch(training = false) {
 }
 
 function openDialog(id) {
+  clearControlHighlights();
   closeAllDialogs(false);
   game.setPaused(true);
   $(id).showModal();
@@ -155,7 +175,7 @@ function showResults() {
   $('result-dialog').classList.toggle('lost', !won && !draw);
   $('result-eyebrow').textContent = result.finished ? won ? 'YOU OWN THE STREETS' : 'THE FIGHT GOES ON' : 'ROUND COMPLETE';
   $('result-title').textContent = draw ? '平分秋色' : result.finished ? won ? '全场制霸' : '再战，不止' : won ? '回合胜利' : '回合惜败';
-  $('result-description').textContent = draw ? '这一回合不计胜负，下一回合见真章。' : result.finished ? won ? '今夜九龙，你的主场。' : '真正的格斗家，从不止步于一次失利。' : result.reason === 'timeout' ? '时间结束，剩余生命值决定了这一回合。' : won ? '漂亮的一击。保持节奏，拿下下一回合。' : '调整步伐，记得用 S 格挡对手的进攻。';
+  $('result-description').textContent = draw ? '这一回合不计胜负，下一回合见真章。' : result.finished ? won ? '今夜九龙，你的主场。' : '真正的格斗家，从不止步于一次失利。' : result.reason === 'timeout' ? '时间结束，剩余生命值决定了这一回合。' : won ? '漂亮的一击。保持节奏，拿下下一回合。' : '调整步伐，按相对角色朝向的后方向防御。';
   $('result-player').textContent = CHARACTERS[game.fighters[0].id].name;
   $('result-enemy').textContent = CHARACTERS[game.fighters[1].id].name;
   $('result-score').textContent = game.wins.join(' : ');
@@ -167,13 +187,27 @@ function showResults() {
 }
 
 function updateHud() {
+  $('skill-bar').hidden = !['playing', 'intro'].includes(game.state);
+  for (const [type, cost] of [['special', 50], ['skill', 35]]) {
+    const button = $('skill-bar').querySelector(`[data-control=${type}]`);
+    button.classList.toggle('unavailable', game.fighters[0].energy < cost);
+    button.setAttribute('aria-label', `${CHARACTERS[game.fighters[0].id][type]}，消耗 ${cost} 气`);
+  }
+  const activeCallout = skillCallout && game.elapsed < skillCallout.until;
+  $('skill-callout').hidden = !activeCallout;
+  if (activeCallout) {
+    $('skill-callout').textContent = skillCallout.text;
+    $('skill-callout').style.color = skillCallout.color;
+    $('skill-callout').classList.toggle('enemy-skill', skillCallout.index === 1);
+  }
   for (let i = 0; i < 2; i++) {
     const f = game.fighters[i], prefix = i === 0 ? 'player' : 'enemy';
-    const width = `calc(${f.hp}% - ${f.hp * .06}px)`;
+    const hpPercent = Math.max(0, Math.min(100, f.hp / (CHARACTERS[f.id].maxHp || 100) * 100));
+    const width = `calc(${hpPercent}% - ${hpPercent * .06}px)`;
     $(`${prefix}-health`).style.width = width;
     $(`${prefix}-health-lag`).style.width = width;
     $(`${prefix}-health`).setAttribute('aria-label', `${Math.ceil(f.hp)} 生命值`);
-    $(`${prefix}-energy`).style.width = `${f.energy}%`;
+    $(`${prefix}-energy`).style.width = `${f.energy / (CHARACTERS[f.id].maxEnergy || 100) * 100}%`;
     $(`${prefix}-energy-label`).textContent = f.energy >= 50 ? '必杀就绪' : `气 ${Math.floor(f.energy)}%`;
     $(`${prefix}-energy-label`).style.color = f.energy >= 50 ? '#ffed68' : '';
     $(`${prefix}-rounds`).querySelectorAll('i').forEach((dot, n) => dot.classList.toggle('won', n < game.wins[i]));
@@ -187,6 +221,14 @@ function updateHud() {
   $('mode-label').innerHTML = game.training ? 'TRAINING <em>·</em> 自由练习' : `ROUND ${game.round} <em>·</em> 自由对战`;
   $('training-damage').textContent = game.trainingDamage;
   $('training-hits').textContent = game.trainingHits;
+  $('fps-label').hidden = !game.training && !settings.combatDebug;
+  if (settings.combatDebug && game.getDebugSnapshot) {
+    const snapshot = game.getDebugSnapshot();
+    for (const [i, f] of snapshot.fighters.entries()) {
+      const hit = f.lastHit;
+      $(`debug-fighter-${i}`).textContent = `${i ? 'CPU' : 'P1'}  ${f.state}  ${f.stateFrame ?? 0}F\n${f.move || '—'}  ${f.moveFrame ?? 0}F  ${f.activePhase || '—'}\n${hit ? `${hit.result} · ${hit.damage ?? 0} 伤害` : '无命中'} `;
+    }
+  }
   let text = '';
   if (game.state === 'intro') text = game.introTime > .85 ? `ROUND ${game.round}<small>三局两胜 · 先赢两局者胜</small>` : 'FIGHT!<small>即刻开战</small>';
   if (game.result && game.result.age < 1.3) text = game.result.reason === 'timeout' ? 'TIME UP<small>时间到</small>' : 'K.O.<small>胜负已分</small>';
@@ -240,6 +282,8 @@ $('settings-form').addEventListener('submit', event => {
   settings.volume = Number($('volume-input').value);
   settings.shake = $('shake-input').checked;
   settings.rain = $('rain-input').checked;
+  settings.bones = $('bones-input').checked;
+  settings.combatDebug = $('combat-debug-input').checked;
   storage.set('street-duel-settings', settings);
   applySettings(); closeAllDialogs(); sound.unlock(); toast('设置已保存');
 });
@@ -259,8 +303,36 @@ document.addEventListener('fullscreenchange', () => {
   $('fullscreen-button').setAttribute('aria-label', document.fullscreenElement ? '退出全屏' : '切换全屏');
 });
 
-const keyMap = { KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', KeyW: 'jump', ArrowUp: 'jump', KeyS: 'block', ArrowDown: 'block', KeyJ: 'punch', KeyK: 'kick', KeyL: 'special' };
+function toggleBones() {
+  settings.bones = !settings.bones;
+  applySettings();
+  storage.set('street-duel-settings', settings);
+}
+$('bones-button').addEventListener('click', toggleBones);
+function toggleCombatDebug() {
+  settings.combatDebug = !settings.combatDebug;
+  applySettings();
+  storage.set('street-duel-settings', settings);
+  updateHud();
+}
+$('combat-debug-button').addEventListener('click', toggleCombatDebug);
+
+const keyMap = { KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', KeyW: 'jump', ArrowUp: 'jump', KeyS: 'crouch', ArrowDown: 'crouch', KeyJ: 'punch', KeyK: 'kick', KeyL: 'special', KeyO: 'skill' };
 const keysDown = new Set();
+function controlHeld(action) {
+  return [...keysDown].some(code => keyMap[code] === action) || [...activePointers.values()].includes(action);
+}
+function syncKeyHighlights() {
+  const actions = new Set([...keysDown].map(code => keyMap[code]));
+  for (const action of activePointers.values()) actions.add(action);
+  document.querySelectorAll('[data-control]').forEach(button => button.classList.toggle('pressed', actions.has(button.dataset.control)));
+  document.querySelectorAll('.keyboard-guide kbd,.settings-keys kbd').forEach(key => key.classList.toggle('pressed', actions.has(keyMap[`Key${key.textContent.trim()}`])));
+}
+function clearControlHighlights() {
+  keysDown.clear();
+  activePointers.clear();
+  document.querySelectorAll('.pressed').forEach(key => key.classList.remove('pressed'));
+}
 document.addEventListener('keydown', event => {
   if (event.code === 'Escape') {
     if (!document.querySelector('dialog[open]')) { event.preventDefault(); pause(); }
@@ -271,19 +343,23 @@ document.addEventListener('keydown', event => {
     return;
   }
   if (event.code === 'Enter' && game.state === 'ready') { event.preventDefault(); startMatch(); return; }
+  if (event.code === 'F3' && !event.repeat) { event.preventDefault(); toggleCombatDebug(); return; }
+  if (event.code === 'KeyB' && !event.repeat) { event.preventDefault(); toggleBones(); return; }
   const action = keyMap[event.code];
   if (!action) return;
   event.preventDefault();
   if (event.repeat) return;
   keysDown.add(event.code);
+  syncKeyHighlights();
   if (game.state === 'playing') { sound.unlock(); game.setInput(action, true); }
 });
 document.addEventListener('keyup', event => {
   keysDown.delete(event.code);
+  syncKeyHighlights();
   const action = keyMap[event.code];
-  if (action && ![...keysDown].some(code => keyMap[code] === action)) game.setInput(action, false);
+  if (action && !controlHeld(action)) game.setInput(action, false);
 });
-window.addEventListener('blur', () => { keysDown.clear(); game.clearInput(); });
+window.addEventListener('blur', () => { clearControlHighlights(); game.clearInput(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && ['playing', 'intro'].includes(game.state) && !document.querySelector('dialog[open]')) pause(); });
 const activePointers = new Map();
 document.querySelectorAll('[data-control]').forEach(button => {
@@ -292,20 +368,22 @@ document.querySelectorAll('[data-control]').forEach(button => {
     sound.unlock();
     button.setPointerCapture(event.pointerId);
     activePointers.set(event.pointerId, button.dataset.control);
+    syncKeyHighlights();
     if (game.state === 'playing') game.setInput(button.dataset.control, true);
     button.classList.add('pressed');
   });
   const release = event => {
     const action = activePointers.get(event.pointerId);
     activePointers.delete(event.pointerId);
-    if (action && ![...activePointers.values()].includes(action)) game.setInput(action, false);
-    button.classList.remove('pressed');
+    if (action && !controlHeld(action)) game.setInput(action, false);
+    syncKeyHighlights();
   };
   button.addEventListener('pointerup', release);
   button.addEventListener('pointercancel', release);
   button.addEventListener('lostpointercapture', release);
   button.addEventListener('contextmenu', event => event.preventDefault());
 });
+
 
 applySettings();
 updateNames();
@@ -327,7 +405,7 @@ let previous = performance.now(), accumulator = 0;
 function frame(now) {
   const dt = Math.min((now - previous) / 1000, .1); previous = now;
   accumulator += dt;
-  while (accumulator >= 1 / 120) { game.update(1 / 120); accumulator -= 1 / 120; }
+  while (accumulator >= 1 / 60) { game.update(1 / 60); accumulator -= 1 / 60; }
   renderer.render(dt);
   hudTime += dt;
   if (hudTime >= .04) { updateHud(); hudTime = 0; }

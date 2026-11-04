@@ -29,7 +29,7 @@
       <div class="arena-background"></div>
       <div class="arena-vignette"></div>
       <div class="preview-fighters" id="preview-fighters" aria-hidden="true"><div class="preview-fighter art-lieying"></div><div class="preview-fighter art-hanfeng"></div></div>
-      <canvas id="game-canvas" width="1600" height="760" aria-label="对战画面：使用 A D 移动，W 跳跃，S 防御，J 出拳，K 踢腿，L 必杀"></canvas>
+      <canvas id="game-canvas" width="1600" height="760" aria-label="对战画面：使用 A D 移动，W 跳跃，S 下蹲，后退方向防御，J 出拳，K 踢腿，L 远程必杀，O 近身技能，B 显示骨骼"></canvas>
       <div class="hud" aria-label="对战状态">
         <div class="fighter-hud player-hud">
           <div class="portrait portrait-lieying" id="player-portrait"></div>
@@ -38,7 +38,7 @@
             <div class="energy-line"><div class="energy-track"><div id="player-energy"></div><span></span></div><span class="energy-label" id="player-energy-label">气 30%</span><div class="round-dots" id="player-rounds"><i></i><i></i></div></div>
           </div>
         </div>
-        <div class="timer-block"><strong id="timer">90</strong><span id="round-label">ROUND 01</span><div class="timer-bottom"></div></div>
+        <div class="timer-block"><strong id="timer">99</strong><span id="round-label">ROUND 01</span><div class="timer-bottom"></div></div>
         <div class="fighter-hud enemy-hud">
           <div class="portrait portrait-hanfeng" id="enemy-portrait"></div>
           <div class="fighter-info"><div class="name-line"><span class="player-tag cpu-tag" id="opponent-tag">CPU</span><strong id="enemy-name">寒锋</strong><span class="fighter-subtitle" id="enemy-subtitle">霜刃无声</span></div>
@@ -49,6 +49,11 @@
       </div>
       <div class="stage-caption"><span class="live-mark"></span> KOWLOON · 九龙商街 <span class="stage-weather">小雨 / 23°C</span></div>
       <button class="arena-expand icon-button" id="fullscreen-button" aria-label="切换全屏" title="全屏"><svg viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button>
+      <button id="bones-button" class="bones-button" aria-pressed="false" title="B：显示或隐藏角色骨骼">显示骨骼 <kbd>B</kbd></button>
+      <button id="combat-debug-button" class="combat-debug-button" aria-pressed="false" title="F3：显示判定框与角色状态">显示判定框 <kbd>F3</kbd></button>
+      <div id="combat-debug-readout" class="combat-debug-readout" hidden><div class="debug-legend"><i class="push"></i>身体 <i class="hurt"></i>受击 <i class="hit"></i>攻击</div><pre id="debug-fighter-0"></pre><pre id="debug-fighter-1"></pre></div>
+      <div class="skill-callout" id="skill-callout" aria-live="polite" hidden></div>
+      <div class="skill-bar" id="skill-bar" hidden><button data-control="special" class="skill-chip"><kbd>L</kbd><span><b id="special-name">赤焰掌</b><small>远程 · 50 气</small></span><i>✦</i></button><button data-control="skill" class="skill-chip"><kbd>O</kbd><span><b id="skill-name">流火冲拳</b><small>近身 · 35 气</small></span><i>↗</i></button></div>
       <div class="combo combo-player" id="player-combo" aria-live="polite"><b>0</b><span>HIT<small>完美连击</small></span></div>
       <div class="combo combo-enemy" id="enemy-combo"><b>0</b><span>HIT<small>对手连击</small></span></div>
       <div class="battle-callout" id="battle-callout" aria-live="assertive"></div>
@@ -61,17 +66,17 @@
       </div>
       <div class="asset-loading" id="asset-loading" hidden><span class="loader"></span><b>正在进入九龙商街</b><small>加载场景与角色…</small></div>
       <div class="touch-controls" id="touch-controls" aria-label="触屏操作">
-        <div class="touch-movement"><button data-control="jump" aria-label="跳跃">↑</button><button data-control="left" aria-label="向左">←</button><button data-control="block" aria-label="防御">盾</button><button data-control="right" aria-label="向右">→</button></div>
-        <div class="touch-attacks"><button data-control="punch">拳</button><button data-control="kick">踢</button><button data-control="special" class="touch-special">必杀</button></div>
+        <div class="touch-movement"><button data-control="jump" aria-label="跳跃">↑</button><button data-control="left" aria-label="向左">←</button><button data-control="crouch" aria-label="下蹲">↓</button><button data-control="right" aria-label="向右">→</button></div>
+        <div class="touch-attacks"><button data-control="punch">拳</button><button data-control="kick">踢</button><button data-control="special" class="touch-special">远程</button><button data-control="skill" class="touch-skill">近身</button></div>
       </div>
     </main>
 
     <section class="controlbar" aria-label="操作栏">
       <div class="match-status"><i></i><strong id="mode-label">ROUND 1 <em>·</em> 自由对战</strong><small id="difficulty-label">标准难度</small></div>
-      <div class="keyboard-guide"><div class="key-group"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><small>移动 / 防御</small></div><div class="control-divider"></div><div class="key-group"><span><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd></span><small>拳 / 踢 / 必杀</small></div></div>
+      <div class="keyboard-guide"><div class="key-group"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><small>移动 / 下蹲</small></div><div class="control-divider"></div><div class="key-group"><span><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd><kbd>O</kbd></span><small>轻 / 重 / 技能一 / 技能二</small></div></div>
       <div class="control-actions"><button class="button button-yellow restart-button" id="restart-button"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-1 5M20 4v7h-7"/></svg><span>重新开始</span></button><button class="button button-outline" id="settings-button"><svg viewBox="0 0 24 24"><path d="m9 3-.5 2.3-2 .9-2.1-.7-2 3.5 1.6 1.6v2.8L2.5 15l2 3.5 2.1-.7 2 .9L9 21h4l.5-2.3 2-.9 2.1.7 2-3.5-1.6-1.6v-2.8L19.6 9l-2-3.5-2.1.7-2-.9L13 3Z"/><circle cx="11" cy="12" r="3"/></svg><span>设置</span></button></div>
     </section>
-    <footer class="statusbar"><div><button id="pause-button"><kbd>ESC</kbd><span id="pause-label">暂停</span></button><span class="slash">/</span><span id="fps-label">60 FPS</span><span class="slash">/</span><span id="footer-mode">街机模式</span></div><div class="footer-right"><button id="sound-button" aria-label="关闭音效" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="m11 4-6 5H2v6h3l6 5ZM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg><span>音效开启</span></button><span class="version">STREET DUEL <b>v1.0</b></span></div></footer>
+    <footer class="statusbar"><div><button id="pause-button"><kbd>ESC</kbd><span id="pause-label">暂停</span></button><span class="slash">/</span><span id="fps-label">60 FPS</span><span class="slash">/</span><span id="footer-mode">街机模式</span></div><div class="footer-right"><button id="sound-button" aria-label="关闭音效" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="m11 4-6 5H2v6h3l6 5ZM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg><span>音效开启</span></button><span class="version">STREET DUEL <b>v1.4</b></span></div></footer>
   </div>
 
   <dialog id="pause-dialog" class="game-dialog pause-dialog"><div class="dialog-inner"><span class="eyebrow">TAKE A BREATH</span><h2>对战已暂停</h2><p>街头的雨，还在等你。</p><button class="button button-yellow" id="resume-button">继续对战 <span>↵</span></button><button class="text-button" id="pause-settings-button">游戏设置</button></div></dialog>
@@ -80,14 +85,16 @@
     <label class="setting-field"><span>电脑难度<small>在当前对战中即时生效</small></span><select id="difficulty-select"><option value="easy">新手 · 轻松热身</option><option value="normal" selected>标准 · 势均力敌</option><option value="hard">高手 · 全力以赴</option></select></label>
     <label class="setting-field"><span>音效音量</span><input type="range" id="volume-input" min="0" max="100" value="45" aria-label="音效音量"><output id="volume-output">45%</output></label>
     <label class="setting-field"><span>屏幕震动<small>攻击命中时的视觉反馈</small></span><input type="checkbox" id="shake-input" class="toggle" checked></label>
+    <label class="setting-field"><span>显示人物骨骼<small>B 键可即时切换</small></span><input type="checkbox" id="bones-input" class="toggle"></label>
     <label class="setting-field"><span>雨景特效</span><input type="checkbox" id="rain-input" class="toggle" checked></label>
-    <div class="settings-keys"><span><kbd>A</kbd><kbd>D</kbd> 移动</span><span><kbd>W</kbd> 跳跃</span><span><kbd>S</kbd> 防御</span><span><kbd>J</kbd> 出拳</span><span><kbd>K</kbd> 重踢</span><span><kbd>L</kbd> 必杀 <small>消耗 50 气</small></span></div>
-    <button class="button button-yellow full-width" type="submit">保存设置</button>
+    <label class="setting-field"><span>显示战斗判定<small>F3 切换碰撞框、有效帧和角色状态</small></span><input type="checkbox" id="combat-debug-input" class="toggle"></label>
+    <div class="settings-keys"><span><kbd>A</kbd><kbd>D</kbd> 移动</span><span><kbd>W</kbd> 跳跃</span><span><kbd>S</kbd> 下蹲</span><span><kbd>J</kbd> 轻击</span><span><kbd>K</kbd> 重击</span><span><kbd>L</kbd> 远程必杀 <small>50 气</small></span><span><kbd>O</kbd> 近身技能 <small>35 气</small></span></div>
+    <p class="guard-hint">按住后退方向防御来袭攻击，下蹲＋后退防御下段攻击。</p><button class="button button-yellow full-width" type="submit">保存设置</button>
   </form></div></dialog>
 
   <dialog id="characters-dialog" class="game-dialog characters-dialog"><div class="dialog-inner"><button class="close-dialog icon-button" data-close="characters-dialog" aria-label="关闭角色选择">×</button><span class="eyebrow">CHOOSE YOUR FIGHTER</span><h2>选择你的出战角色</h2><p>不同的风格，同样的战意。</p><div class="character-grid">
-    <button class="character-card selected" data-character="lieying" aria-pressed="true"><div class="character-art art-lieying"></div><span class="character-number">01</span><div class="character-details"><span>赤焰疾风 · 速度型</span><h3>烈影<small>LIE YING</small></h3><p>疾风连击，赤焰破阵。</p><div class="character-stat">速度 <i style="--stat:92%"></i></div><div class="character-stat">力量 <i style="--stat:72%"></i></div></div><span class="selected-badge">✓ 已选择</span></button>
-    <button class="character-card" data-character="hanfeng" aria-pressed="false"><div class="character-art art-hanfeng"></div><span class="character-number">02</span><div class="character-details"><span>霜刃无声 · 力量型</span><h3>寒锋<small>HAN FENG</small></h3><p>沉稳如山，一击破空。</p><div class="character-stat">速度 <i style="--stat:72%"></i></div><div class="character-stat">力量 <i style="--stat:94%"></i></div></div><span class="selected-badge">✓ 已选择</span></button>
+    <button class="character-card selected" data-character="lieying" aria-pressed="true"><div class="character-art art-lieying"></div><span class="character-number">01</span><div class="character-details"><span>赤焰疾风 · 速度型</span><h3>烈影<small>LIE YING</small></h3><p>L 赤焰掌 · O 流火冲拳</p><div class="character-stat">速度 <i style="--stat:92%"></i></div><div class="character-stat">力量 <i style="--stat:72%"></i></div></div><span class="selected-badge">✓ 已选择</span></button>
+    <button class="character-card" data-character="hanfeng" aria-pressed="false"><div class="character-art art-hanfeng"></div><span class="character-number">02</span><div class="character-details"><span>霜刃无声 · 力量型</span><h3>寒锋<small>HAN FENG</small></h3><p>L 冰棱破 · O 霜环升龙</p><div class="character-stat">速度 <i style="--stat:72%"></i></div><div class="character-stat">力量 <i style="--stat:94%"></i></div></div><span class="selected-badge">✓ 已选择</span></button>
   </div><button id="confirm-character" class="button button-yellow full-width">以烈影出战 →</button></div></dialog>
 
   <dialog id="leaderboard-dialog" class="game-dialog leaderboard-dialog"><div class="dialog-inner"><button class="close-dialog icon-button" data-close="leaderboard-dialog" aria-label="关闭排行榜">×</button><span class="eyebrow">LEAVE YOUR MARK</span><h2>街头荣誉榜</h2><p>你的每一场胜利，都值得被记住。</p><div class="personal-stats"><div><b id="stat-matches">0</b><span>累计对战</span></div><div><b id="stat-wins">0</b><span>胜利场次</span></div><div><b id="stat-combo">0</b><span>最高连击</span></div></div><div class="leaderboard-heading"><span>最近对战</span><small>记录保存在当前浏览器</small></div><div id="match-history"></div><button class="button button-yellow full-width" id="leaderboard-play">再战一场 →</button></div></dialog>
