@@ -1,4 +1,5 @@
-import { WORLD, CHARACTERS, ATTACKS } from './engine.js';
+import { WORLD, CHARACTERS, attackFor } from './engine.js';
+import { poseFor, solveRig, drawRig } from './rig.js';
 
 export class Renderer {
   constructor(canvas, game) {
@@ -7,6 +8,7 @@ export class Renderer {
     this.game = game;
     this.images = {};
     this.rainEnabled = true;
+    this.showBones = false;
     this.shakeEnabled = true;
     this.reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.rain = Array.from({ length: 86 }, () => ({ x: Math.random() * 1600, y: Math.random() * 760, speed: 450 + Math.random() * 500, length: 8 + Math.random() * 23, alpha: .06 + Math.random() * .13 }));
@@ -74,50 +76,83 @@ export class Renderer {
     }
   }
 
-  getFrame(f, index) {
-    const g = this.game;
-    if ((g.state === 'roundOver' || g.state === 'matchOver') && g.result) return g.result.winner === index ? 6 : g.result.winner === -1 ? 0 : 5;
-    if (f.stun > 0 && !f.blocking) return 5;
-    if (f.blocking) return 4;
-    if (f.attack) return f.attack.time < .055 ? 0 : ATTACKS[f.attack.type].frame;
-    if (f.y > 20) return 7;
-    return 0;
-  }
-
   drawFighter(ctx, f, index) {
-    const image = this.images[f.id];
-    if (!image) return;
-    const size = f.id === 'lieying' ? 604 : 626;
-    const frame = this.getFrame(f, index), sw = image.width / 4, sh = image.height / 2;
-    const sx = frame % 4 * sw, sy = Math.floor(frame / 4) * sh;
-    const phase = this.game.elapsed * (f.walking ? 15 : 3.8) + index * 2;
-    const bob = this.reducedMotion ? 0 : Math.sin(phase) * (f.walking ? 7 : 2.2);
-    const shadow = ctx.createRadialGradient(f.x, WORLD.floor + 2, 0, f.x, WORLD.floor + 2, 180);
+    const rig = solveRig(poseFor(f, this.game.elapsed, index, this.game.result));
+    const shadow = ctx.createRadialGradient(f.x, WORLD.floor + 2, 0, f.x, WORLD.floor + 2, 140);
     shadow.addColorStop(0, '#02090bc4'); shadow.addColorStop(1, '#02090b00');
-    ctx.fillStyle = shadow; ctx.beginPath(); ctx.ellipse(f.x, WORLD.floor + 4, 180 - Math.min(f.y * .2, 80), 21, 0, 0, Math.PI * 2); ctx.fill();
-    const draw = () => ctx.drawImage(image, sx + 1, sy + 1, sw - 2, sh - 2, -size / 2, -size * .974, size, size);
-    // Reflections use the same independently animated sprite on the wet street.
+    ctx.fillStyle = shadow; ctx.beginPath(); ctx.ellipse(f.x, WORLD.floor + 4, 140 - Math.min(f.y * .2, 80), 18, 0, 0, Math.PI * 2); ctx.fill();
     if (f.y <= 1) {
-      ctx.save(); ctx.translate(f.x, WORLD.floor + 4); ctx.scale(f.facing, -.2); ctx.globalAlpha = .075; draw(); ctx.restore();
+      ctx.save(); ctx.translate(f.x, WORLD.floor + 4); ctx.scale(f.facing, -.16); ctx.globalAlpha = .10; drawRig(ctx, rig, f.id); ctx.restore();
     }
+    if (f.attack?.type === 'skill' && !this.reducedMotion) this.drawSkillEffect(ctx, f, rig, true);
     ctx.save();
-    ctx.translate(f.x, WORLD.floor - f.y + (f.y > 0 ? 0 : bob));
+    ctx.translate(f.x, WORLD.floor - f.y);
     ctx.scale(f.facing, 1);
-    if (f.walking && !this.reducedMotion && !f.attack && !f.stun) ctx.rotate(Math.sin(phase) * .009);
     if (f.hp <= 0 && this.game.result) {
       const progress = Math.min(1, this.game.result.age * 2);
-      ctx.translate(0, -18 * progress);
-      ctx.rotate(-progress * 1.28);
-      ctx.globalAlpha = 1 - progress * .15;
+      ctx.translate(0, -18 * progress); ctx.rotate(-progress * 1.28);
     }
-    if (f.hitFlash > .07) ctx.filter = 'brightness(1.75) saturate(.65)';
-    draw();
+    if (f.hitFlash > .07) ctx.globalAlpha = .65;
+    drawRig(ctx, rig, f.id, { bones: this.showBones });
     ctx.restore();
-    if (f.attack && !this.reducedMotion) this.drawAttackTrail(ctx, f);
+    if (f.attack) {
+      if (!this.reducedMotion) this.drawAttackTrail(ctx, f);
+      if (['special', 'skill'].includes(f.attack.type)) this.drawSkillEffect(ctx, f, rig, false);
+    }
+  }
+
+  drawSkillEffect(ctx, f, rig, behind) {
+    const a = f.attack, move = attackFor(f.id, a.type), c = CHARACTERS[f.id];
+    const windup = a.time / move.active, age = a.time - move.active;
+    ctx.save(); ctx.translate(f.x, WORLD.floor - f.y); ctx.scale(a.direction, 1); ctx.globalCompositeOperation = 'lighter';
+    ctx.shadowColor = c.color; ctx.shadowBlur = 0;
+    if (!behind && age < 0) {
+      const hand = rig.wristN, size = 12 + windup * 24;
+      const glow = ctx.createRadialGradient(hand.x, hand.y, 1, hand.x, hand.y, size * 2);
+      glow.addColorStop(0, '#ffffff'); glow.addColorStop(.22, c.color + 'cc'); glow.addColorStop(1, c.color + '00');
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(hand.x, hand.y, size * 2, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = c.color; ctx.lineWidth = 2;
+      for (let i = 0; i < 5; i++) {
+        const angle = i * Math.PI * .4 + a.time * 9;
+        ctx.beginPath(); ctx.arc(hand.x, hand.y, size + 20, angle, angle + .36); ctx.stroke();
+      }
+    }
+    if (move.effect === 'dash' && a.time > .1 && age < .30) {
+      if (behind) {
+        ctx.globalAlpha = .14;
+        for (let i = 3; i >= 1; i--) { ctx.save(); ctx.translate(-i * 52, i * 2); drawRig(ctx, rig, f.id); ctx.restore(); }
+        ctx.globalAlpha = .7; ctx.strokeStyle = '#ffb225';
+        for (let i = 0; i < 8; i++) {
+          const y = -65 - i * 49, offset = (a.time * 540 + i * 32) % 95;
+          ctx.lineWidth = i % 3 + 1; ctx.beginPath(); ctx.moveTo(-190 - offset, y); ctx.lineTo(-60 + offset, y - 13); ctx.stroke();
+        }
+      } else {
+        const hand = rig.wristN;
+        ctx.fillStyle = '#ff8b26aa';
+        shapeFlame(ctx, hand.x, hand.y, 70, a.time);
+        ctx.fillStyle = '#fff4c1'; shapeFlame(ctx, hand.x + 10, hand.y, 32, a.time);
+      }
+    }
+    if (move.effect === 'uppercut' && age >= -.03 && age < .36) {
+      const progress = Math.max(0, age / .36), alpha = Math.sin(Math.min(1, progress + .18) * Math.PI);
+      ctx.globalAlpha = alpha * .85;
+      ctx.strokeStyle = c.color; ctx.lineWidth = behind ? 15 : 4;
+      ctx.beginPath(); ctx.ellipse(40, -312, 131 + progress * 18, 213, -.28, .2 - progress * 1.7, -2.65 - progress * .2, true); ctx.stroke();
+      if (!behind) {
+        ctx.strokeStyle = '#e1ffff'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.ellipse(42, -315, 147, 225, -.28, -.25 - progress, -2.7, true); ctx.stroke();
+        for (let i = 0; i < 7; i++) {
+          const angle = -Math.PI * .15 - i * .39 - progress * .6;
+          const x = 40 + Math.cos(angle) * 143, y = -312 + Math.sin(angle) * 213;
+          crystal(ctx, x, y, 11 + i % 3 * 5, angle, '#c9ffff', '#319fc6');
+        }
+      }
+    }
+    ctx.restore();
   }
 
   drawAttackTrail(ctx, f) {
-    const a = f.attack, move = ATTACKS[a.type];
+    const a = f.attack, move = attackFor(f.id, a.type);
     if (a.time < move.active * .6 || a.time > move.end + .06) return;
     const progress = (a.time - move.active * .6) / (move.end + .06 - move.active * .6);
     const color = CHARACTERS[f.id].color;
@@ -134,14 +169,25 @@ export class Renderer {
   }
 
   drawProjectile(ctx, p) {
-    const color = CHARACTERS[this.game.fighters[p.owner].id].color;
-    const y = WORLD.floor - p.y;
+    const c = CHARACTERS[this.game.fighters[p.owner].id], y = WORLD.floor - p.y;
     ctx.save(); ctx.translate(p.x, y); ctx.scale(p.direction, 1); ctx.globalCompositeOperation = 'lighter';
-    const glow = ctx.createRadialGradient(0, 0, 5, 0, 0, 95); glow.addColorStop(0, '#fff9dbdd'); glow.addColorStop(.2, color + 'b0'); glow.addColorStop(1, color + '00');
-    ctx.fillStyle = glow; ctx.beginPath(); ctx.ellipse(-20, 0, 110, 75, 0, 0, Math.PI * 2); ctx.fill();
-    for (let i = 0; i < 4; i++) {
-      ctx.strokeStyle = i % 2 ? '#fffbe6' : color; ctx.lineWidth = 3 + i; ctx.shadowBlur = 18; ctx.shadowColor = color; ctx.globalAlpha = .8 - i * .12;
-      ctx.beginPath(); ctx.ellipse(-i * 18, 0, 34 + i * 6, 48 + Math.sin(p.age * 22 + i) * 7, 0, -1.45, 1.45); ctx.stroke();
+    const glow = ctx.createRadialGradient(0, 0, 5, 0, 0, 115);
+    glow.addColorStop(0, '#ffffffcc'); glow.addColorStop(.25, c.color + 'a0'); glow.addColorStop(1, c.color + '00');
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.ellipse(-25, 0, 155, 85, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowColor = c.color; ctx.shadowBlur = 18;
+    if (p.effect === 'ice') {
+      for (let i = 4; i >= 0; i--) {
+        ctx.globalAlpha = .25 + (4 - i) * .16;
+        crystal(ctx, -i * 26, Math.sin(p.age * 14 + i) * 17, 43 - i * 4, 0, '#eaffff', '#2684bd');
+      }
+      ctx.strokeStyle = '#91eafa'; ctx.lineWidth = 2;
+      for (let i = 0; i < 6; i++) { const x = -50 - (p.age * 420 + i * 31) % 140, dy = Math.sin(i * 12) * 38; ctx.beginPath(); ctx.moveTo(x, dy); ctx.lineTo(x - 36, dy); ctx.stroke(); }
+    } else {
+      for (let i = 0; i < 5; i++) {
+        ctx.fillStyle = i % 2 ? '#ff5a26a0' : '#ffc53bd0';
+        shapeFlame(ctx, -i * 14, Math.sin(p.age * 22 + i) * 8, 68 - i * 5, p.age + i);
+      }
+      ctx.fillStyle = '#fff3bf'; shapeFlame(ctx, 15, 0, 35, p.age);
     }
     ctx.restore();
   }
@@ -184,10 +230,10 @@ export class Sound {
   }
   play(event) {
     switch (event.type) {
-      case 'attack': this.tone(event.move === 'kick' ? 140 : 190, .08, 'triangle', .1, 70); break;
+      case 'attack': this.tone(event.move === 'skill' ? 95 : event.move === 'kick' ? 140 : 190, event.move === 'skill' ? .28 : .08, 'triangle', .1, event.effect === 'uppercut' ? 670 : 70); break;
       case 'hit': this.tone(110, .16, 'sawtooth', .11, 28); this.tone(450, .055, 'triangle', .1, 55); break;
       case 'block': this.tone(740, .1, 'square', .04, 260); break;
-      case 'projectile': this.tone(110, .42, 'sawtooth', .06, 570); this.tone(520, .32, 'sine', .07, 180); break;
+      case 'projectile': this.tone(event.effect === 'ice' ? 880 : 110, .42, event.effect === 'ice' ? 'sine' : 'sawtooth', .06, 570); this.tone(520, .32, 'sine', .07, 180); break;
       case 'roundStart': this.tone(280, .5, 'sine', .12, 140); break;
       case 'fight': this.tone(440, .14, 'square', .04); this.tone(660, .35, 'triangle', .1); break;
       case 'roundEnd': this.tone(event.winner === 0 ? 523 : 180, .65, 'triangle', .1, event.winner === 0 ? 1046 : 65); break;
@@ -195,4 +241,18 @@ export class Sound {
       case 'land': this.tone(60, .07, 'sine', .07, 25); break;
     }
   }
+}
+
+function shapeFlame(ctx, x, y, size, time) {
+  const flicker = Math.sin(time * 36) * size * .13;
+  ctx.beginPath(); ctx.moveTo(x + size, y);
+  ctx.bezierCurveTo(x + size * .3, y - size, x - size, y - size * .35, x - size * 1.6, y - size * .55 + flicker);
+  ctx.quadraticCurveTo(x - size * .8, y - size * .05, x - size * 2.2, y + size * .13);
+  ctx.bezierCurveTo(x - size * .6, y + size * .25, x - size * .7, y + size * .9, x + size, y); ctx.fill();
+}
+function crystal(ctx, x, y, size, angle, light, dark) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
+  ctx.beginPath(); ctx.moveTo(size * 1.5, 0); ctx.lineTo(-size * .2, -size * .65); ctx.lineTo(-size, 0); ctx.lineTo(-size * .2, size * .65); ctx.closePath(); ctx.fillStyle = dark; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(size * 1.5, 0); ctx.lineTo(-size * .2, -size * .65); ctx.lineTo(-size * .35, 0); ctx.closePath(); ctx.fillStyle = light; ctx.fill();
+  ctx.strokeStyle = light; ctx.lineWidth = 1.5; ctx.stroke(); ctx.restore();
 }

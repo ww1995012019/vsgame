@@ -1,5 +1,6 @@
 import { Game, CHARACTERS } from './engine.js';
 import { Renderer, Sound } from './renderer.js';
+import { poseFor, solveRig, drawRig } from './rig.js';
 
 const $ = id => document.getElementById(id);
 const storage = {
@@ -7,12 +8,12 @@ const storage = {
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Private mode can deny storage; play remains available. */ } },
 };
 const sound = new Sound();
-const settings = { difficulty: 'normal', volume: 45, shake: true, rain: true, muted: false };
+const settings = { difficulty: 'normal', volume: 45, shake: true, rain: true, muted: false, bones: false };
 const savedSettings = storage.get('street-duel-settings', {});
 if (savedSettings && typeof savedSettings === 'object') {
   if (['easy', 'normal', 'hard'].includes(savedSettings.difficulty)) settings.difficulty = savedSettings.difficulty;
   if (Number.isFinite(savedSettings.volume)) settings.volume = Math.min(100, Math.max(0, savedSettings.volume));
-  for (const key of ['shake', 'rain', 'muted']) if (typeof savedSettings[key] === 'boolean') settings[key] = savedSettings[key];
+  for (const key of ['shake', 'rain', 'muted', 'bones']) if (typeof savedSettings[key] === 'boolean') settings[key] = savedSettings[key];
 }
 const storedHistory = storage.get('street-duel-history', []);
 let history = Array.isArray(storedHistory) ? storedHistory.filter(row => row && Object.hasOwn(CHARACTERS, row.playerId) && [0, 1, -1].includes(row.winner) && Array.isArray(row.wins) && row.wins.length === 2 && row.wins.every(v => Number.isInteger(v) && v >= 0 && v <= 2) && Number.isFinite(row.combo) && Number.isFinite(row.date)).slice(0, 30) : [];
@@ -22,6 +23,7 @@ let selectedCharacter = 'lieying';
 let resultShown = false;
 let fpsCount = 0, fpsTime = 0, hudTime = 0;
 let calloutText = '';
+let skillCallout = null;
 
 export const game = new Game({ onEvent: onGameEvent });
 const renderer = new Renderer($('game-canvas'), game);
@@ -35,7 +37,11 @@ function toast(message) {
 
 function onGameEvent(event) {
   sound.play(event);
-  if (event.type === 'lowEnergy') toast('气不足：命中或格挡积攒能量，50 气可释放必杀');
+  if (event.type === 'lowEnergy') toast(`气不足：此技能需要 ${event.cost} 气，命中或格挡可积攒能量`);
+  if (event.type === 'attack' && ['special', 'skill'].includes(event.move)) {
+    const character = CHARACTERS[event.character];
+    skillCallout = { text: character[event.move], color: character.color, until: game.elapsed + .9, index: event.index };
+  }
   if (event.type === 'roundEnd' && event.finished) {
     history.unshift({ playerId: event.playerId, winner: event.winner, wins: event.wins, combo: event.stats.maxCombo, date: Date.now() });
     history = history.slice(0, 30);
@@ -49,6 +55,10 @@ function applySettings() {
   sound.muted = settings.muted;
   renderer.shakeEnabled = settings.shake;
   renderer.rainEnabled = settings.rain;
+  renderer.showBones = settings.bones;
+  $('bones-input').checked = settings.bones;
+  $('bones-button').setAttribute('aria-pressed', String(settings.bones));
+  $('bones-button').innerHTML = `${settings.bones ? '隐藏' : '显示'}骨骼 <kbd>B</kbd>`;
   $('difficulty-select').value = settings.difficulty;
   $('volume-input').value = settings.volume;
   $('volume-output').value = `${settings.volume}%`;
@@ -68,6 +78,10 @@ function updateNames() {
     $(`${prefix}-subtitle`).textContent = character.subtitle;
     $(`${prefix}-portrait`).className = `portrait portrait-${character.id}`;
   }
+  const character = CHARACTERS[game.fighters[0].id];
+  $('special-name').textContent = character.special;
+  $('skill-name').textContent = character.skill;
+  $('skill-bar').style.setProperty('--fighter-accent', character.color);
   $('opponent-tag').textContent = game.training ? '木桩' : 'CPU';
   $('training-readout').hidden = !game.training;
   $('footer-mode').textContent = game.training ? '训练模式' : '街机模式';
@@ -80,6 +94,7 @@ function startMatch(training = false) {
   sound.unlock();
   game.start({ training, playerId: selectedCharacter });
   resultShown = false;
+  skillCallout = null;
   $('start-prompt').hidden = true;
   $('pause-label').textContent = '暂停';
   updateNames();
@@ -167,6 +182,19 @@ function showResults() {
 }
 
 function updateHud() {
+  $('skill-bar').hidden = !['playing', 'intro'].includes(game.state);
+  for (const [type, cost] of [['special', 50], ['skill', 35]]) {
+    const button = $('skill-bar').querySelector(`[data-control=${type}]`);
+    button.classList.toggle('unavailable', game.fighters[0].energy < cost);
+    button.setAttribute('aria-label', `${CHARACTERS[game.fighters[0].id][type]}，消耗 ${cost} 气`);
+  }
+  const activeCallout = skillCallout && game.elapsed < skillCallout.until;
+  $('skill-callout').hidden = !activeCallout;
+  if (activeCallout) {
+    $('skill-callout').textContent = skillCallout.text;
+    $('skill-callout').style.color = skillCallout.color;
+    $('skill-callout').classList.toggle('enemy-skill', skillCallout.index === 1);
+  }
   for (let i = 0; i < 2; i++) {
     const f = game.fighters[i], prefix = i === 0 ? 'player' : 'enemy';
     const width = `calc(${f.hp}% - ${f.hp * .06}px)`;
@@ -240,6 +268,7 @@ $('settings-form').addEventListener('submit', event => {
   settings.volume = Number($('volume-input').value);
   settings.shake = $('shake-input').checked;
   settings.rain = $('rain-input').checked;
+  settings.bones = $('bones-input').checked;
   storage.set('street-duel-settings', settings);
   applySettings(); closeAllDialogs(); sound.unlock(); toast('设置已保存');
 });
@@ -259,7 +288,14 @@ document.addEventListener('fullscreenchange', () => {
   $('fullscreen-button').setAttribute('aria-label', document.fullscreenElement ? '退出全屏' : '切换全屏');
 });
 
-const keyMap = { KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', KeyW: 'jump', ArrowUp: 'jump', KeyS: 'block', ArrowDown: 'block', KeyJ: 'punch', KeyK: 'kick', KeyL: 'special' };
+function toggleBones() {
+  settings.bones = !settings.bones;
+  applySettings();
+  storage.set('street-duel-settings', settings);
+}
+$('bones-button').addEventListener('click', toggleBones);
+
+const keyMap = { KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', KeyW: 'jump', ArrowUp: 'jump', KeyS: 'block', ArrowDown: 'block', KeyJ: 'punch', KeyK: 'kick', KeyL: 'special', KeyO: 'skill' };
 const keysDown = new Set();
 document.addEventListener('keydown', event => {
   if (event.code === 'Escape') {
@@ -271,6 +307,7 @@ document.addEventListener('keydown', event => {
     return;
   }
   if (event.code === 'Enter' && game.state === 'ready') { event.preventDefault(); startMatch(); return; }
+  if (event.code === 'KeyB' && !event.repeat) { event.preventDefault(); toggleBones(); return; }
   const action = keyMap[event.code];
   if (!action) return;
   event.preventDefault();
@@ -305,6 +342,15 @@ document.querySelectorAll('[data-control]').forEach(button => {
   button.addEventListener('pointercancel', release);
   button.addEventListener('lostpointercapture', release);
   button.addEventListener('contextmenu', event => event.preventDefault());
+});
+
+document.querySelectorAll('.character-art').forEach(art => {
+  const id = art.classList.contains('art-lieying') ? 'lieying' : 'hanfeng';
+  const canvas = document.createElement('canvas'); canvas.width = 340; canvas.height = 560;
+  canvas.style.cssText = 'width:100%;height:100%;object-fit:contain';
+  const ctx = canvas.getContext('2d'); ctx.translate(160, 542);
+  drawRig(ctx, solveRig(poseFor({ id, y: 0 }, 0)), id);
+  art.style.backgroundImage = 'none'; art.append(canvas);
 });
 
 applySettings();
